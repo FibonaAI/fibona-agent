@@ -1,1 +1,73 @@
 # fibona-agent
+
+## Quick start
+
+Requires Python 3.12+ and `uv`.
+
+1. Create a `.env` file in the project root:
+
+   ```dotenv
+   OPENAI_API_KEY=your-api-key
+   FIBONA_MODEL=gpt-6-astra
+
+   # Optional: use a custom API endpoint.
+   # OPENAI_BASE_URL=https://your-provider.example/v1
+   ```
+
+   Set `FIBONA_MODEL` to a model supported by your provider. If omitted, it defaults to `gpt-6-astra`.
+
+2. Start the terminal from the project root:
+
+   ```bash
+   uv run --extra tui terminal.py
+   ```
+
+   `uv` automatically creates `.venv` and installs the dependencies, including the optional TUI dependencies selected by `--extra tui`.
+   No manual environment setup or activation is needed.
+
+   Enter your task in the TUI after it opens.
+
+Press **Enter** to send a message and **Ctrl+C** to exit.
+
+## Use the core as a library
+
+From another `uv` project, add a local checkout without the `tui` extra:
+
+```bash
+uv add /path/to/fibona-agent
+```
+
+This installs the core dependencies without Textual or python-dotenv.
+The core does not load `.env`; configure the client, model, working directory, and input/output in your application:
+
+```python
+import sys
+
+from openai import OpenAI
+from core.agent import Agent, Mind, INSTRUCTIONS
+from core.env import IPythonEnv
+
+with OpenAI(api_key="your-api-key") as client:
+    mind = Mind(client=client, model="gpt-6-astra", instructions=INSTRUCTIONS)
+    env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
+    Agent(mind, cwd=".").run("Your task here", env=env)
+```
+
+Use a model supported by your provider. Pass `base_url` to `OpenAI` for a custom API endpoint.
+The working directory specified by `cwd` must already exist.
+
+## Development
+
+Enable Ruff checks before each commit:
+
+```bash
+uv run pre-commit install
+```
+
+The hooks run Ruff lint and format checks on staged files. Errors block the commit.
+
+To check all tracked files manually:
+
+```bash
+uv run pre-commit run --all-files
+```

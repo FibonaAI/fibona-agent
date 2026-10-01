@@ -1,12 +1,17 @@
-# Local configuration and secrets
-.env
-.env.*
-!.env.example
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
 
-# Editor and operating system files
-.DS_Store
-.idea/
+# Virtual environments
+.venv
+.ruff_cache/
+
+# Editor settings
 .vscode/
 
-# Logs
-*.log
+# Secrets
+.env

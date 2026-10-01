@@ -1,0 +1,63 @@
+[project]
+name = "fibona-agent"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx[socks]>=0.28.1",
+    "ipython>=9.17.1",
+    "openai>=3.20.0",
+]
+
+[project.optional-dependencies]
+tui = [
+    "python-dotenv>=1.2.3",
+    "textual>=8.2.8",
+]
+
+[project.scripts]
+fibona = "terminal:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["fibona", "terminal"]
+
+[tool.setuptools.packages.find]
+include = ["core"]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.2",
+    "ruff>=0.16.9",
+]
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "C", "B", "UP", "N", "RUF", "Q"]
+ignore = ["B027", "FBT003", "C901", "E501", "UP035", "RUF005", "B904", "F403", "E721", "UP031", "RUF022"]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.format]
+docstring-code-format = false
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint.isort]
+known-first-party = ["fibona_agent"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "TID252", "ARG001"]
+"__init__.py" = ["F401"]
