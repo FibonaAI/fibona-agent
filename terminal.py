@@ -37,6 +37,12 @@ class EventStream(io.TextIOBase):
 class Composer(TextArea):
     BINDINGS = (Binding("enter", "send", "Send", priority=True),)
 
+    def on_focus(self) -> None:
+        self.placeholder = ""
+
+    def on_blur(self) -> None:
+        self.placeholder = "Click to type"
+
     async def action_send(self) -> None:
         await self.app._submit(self.text)
 
