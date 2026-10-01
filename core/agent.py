@@ -32,7 +32,7 @@ You wake up knowing only what the call gives you, so build `input` from state: t
 - **`history`**: one `{code, summary, output, error}` dict per finished cell. Each time you wake you see the last ten in full, and a one-line summary and result of each older one; read an older cell from `history[i]` in a cell. A summary is what you planned when you chose the cell; the result says what happened.
   - **output** (`print`) is for the user; only its first and last 500 characters are kept. Print progress and findings for them; keep data for yourself in variables and point to them by name.
 ## In the session
-- `source_code`: your runtime's source code, as a filename -> source text dict (`core/agent.py`, `core/env.py`). When asked how you are implemented, inspect it and pass relevant excerpts to `call_me` before answering.
+- `source_code`: your runtime's source code, as a filename -> source text dict (`core/agent.py`, `core/env.py`, `terminal.py`). Read it directly to understand your runtime or terminal UI, and pass relevant excerpts to `call_me`.
 - `call_llm(input, **params) -> str`: a plain model call with no instructions and no host tool. It is not you, just a way to use intelligence as a function; it cannot choose a cell, so it is safe to call from many threads at once.
 - `input(prompt)`: asks the user and waits for the reply; this is how you wait for the user. When a task is done, ask what's next instead of stopping.
 - `quit()`: ends the run. Call it only when the user asks.
@@ -327,14 +327,14 @@ class Agent:
             env = env if env is not None else IPythonEnv()
             memory = Memory(task)
             source_code = {
-                f"core/{name}": Path(__file__).with_name(name).read_text(encoding="utf-8")
-                for name in ("agent.py", "env.py")
+                name: (Path(__file__).parent.parent / name).read_text(encoding="utf-8")
+                for name in ("core/agent.py", "core/env.py", "terminal.py")
             }
 
             def quit_() -> None:
                 raise Quit
 
-            code, summary = _wake_cell(self.START), "Start the task."
+            code, summary = _wake_cell(f"{self.START}\n\nUser task:\n{task}"), "Start the task."
             failures = 0
             while True:
                 slot = Slot()
