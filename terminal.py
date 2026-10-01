@@ -16,6 +16,8 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Collapsible, Static, TextArea
 
+from notebook import Notebook
+
 
 class EventStream(io.TextIOBase):
     """Forward Python output to the UI without writing to its terminal."""
@@ -83,6 +85,8 @@ class Terminal(App):
         self.session_id = uuid4().hex
         self.cwd = Path.home() / ".fibona" / self.session_id / "workspace"
         self.cwd.mkdir(parents=True)
+        self.notebook = Notebook()
+        self.notebook_path = self.cwd.parent / "session.ipynb"
         self.thread = None
         self.inputs = Queue()
         self.closed = Event()
@@ -124,6 +128,8 @@ class Terminal(App):
                 (state, "#a4cea2"),
                 (" · ", "#9494a4"),
                 (self.model, "#ba94ed"),
+                (" · ", "#9494a4"),
+                Text("notebook", style="#f0a6ca underline").on(click="app.copy_notebook_path"),
                 (" · ", "#9494a4"),
                 (self.session_id, "#f0a6ca"),
             )
@@ -186,6 +192,8 @@ class Terminal(App):
             self.model_requests -= 1
         elif kind == "cell":
             number, summary, code = data
+            self.notebook.start_cell(number, summary, code)
+            self._save_notebook()
             self._reset_output()
             error_widget = Static("", classes="error")
             card = Collapsible(
@@ -196,6 +204,7 @@ class Terminal(App):
             self._set_state(f"Running · cell {number}")
         elif kind == "output":
             channel, text = data
+            self.notebook.output(channel, text)
             if self.output_widget is None or channel != self.output_channel:
                 self._reset_output()
                 self.output_channel = channel
@@ -210,10 +219,14 @@ class Terminal(App):
         elif kind == "input":
             self._reset_output()
             if data[0].strip() not in {"", ">"}:
+                self.notebook.output("stdout", data[0] + "\n")
                 await self._append(Static(Text(data[0]), classes="message notice"))
+            self._save_notebook()
             self._set_state("Waiting for input")
         elif kind == "result":
             number, error = data
+            self.notebook.finish_cell(error)
+            self._save_notebook()
             card, summary, error_widget = self.cells[number]
             card.title = f"{'✗' if error else '✓'} cell {number} · {summary}"
             if error:
@@ -224,11 +237,18 @@ class Terminal(App):
             await self._finish("Session ended. Send a new task to start again.")
 
     async def _finish(self, message: str, *, failed: bool = False) -> None:
+        self._save_notebook()
         self._close_session()
         self.thread = None
         self._reset_output()
         self._set_state("Error" if failed else "Ready")
         await self._append(Static(Text(message), classes="message error" if failed else "message notice"))
+
+    def _save_notebook(self) -> None:
+        try:
+            self.notebook.save(self.notebook_path)
+        except OSError as error:
+            self.notify(f"Could not save notebook: {error}", severity="error", timeout=10)
 
     def _close_session(self) -> None:
         self.model_requests = 0
@@ -318,6 +338,10 @@ Access UI through `terminal.call_from_thread(callback, *args, **kwargs)`; callba
         except BaseException as error:
             send(("error", str(error) or type(error).__name__))
 
+    def action_copy_notebook_path(self) -> None:
+        self.copy_to_clipboard(str(self.notebook_path))
+        self.notify("Notebook path copied.")
+
     def compose(self) -> ComposeResult:
         yield VerticalScroll(Static(Text(self.LOGO, no_wrap=True, overflow="crop"), id="welcome"), id="messages")
         with Vertical(id="bottom"):
@@ -340,6 +364,7 @@ Access UI through `terminal.call_from_thread(callback, *args, **kwargs)`; callba
 
     def on_unmount(self) -> None:
         self._close_session()
+        self._save_notebook()
 
 
 def main() -> int:
