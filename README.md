@@ -29,6 +29,9 @@ Requires Python 3.12+ and `uv`.
 
 Press **Enter** to send a message and **Ctrl+C** to exit.
 
+Cells and outputs are automatically saved to `~/.fibona/<session_id>/session.ipynb`.
+Click `notebook` in the status bar to copy its path.
+
 ## Use the core as a library
 
 From another `uv` project, add a local checkout without the `tui` extra:
