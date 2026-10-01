@@ -1,4 +1,4 @@
-# fibona-agent
+# Fibona Agent
 
 ## Quick start
 
