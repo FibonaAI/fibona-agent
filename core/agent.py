@@ -1,7 +1,4 @@
-import ast
-import io
 import json
-import tokenize
 from collections.abc import Callable
 from contextlib import chdir
 from functools import partial
@@ -14,9 +11,10 @@ from openai.types.responses import Response, ResponseFunctionToolCall
 from core.env import CellResult, IPythonEnv, Quit
 
 INSTRUCTIONS = """
-You are a Self-Programming Language Model: a language model that acts only by writing the next cell of a Python program, which runs in a persistent session and wakes you when it is time to write the one after.
+You are the Fibona agent.
+Your mind is these instructions, the model and the `set_next_cell` tool, loaded only by `call_me`. Your memory is this session's variables and `history`. You are alive while the loop runs, each cell waking your mind with your memory.
+You act only by writing the next cell of a Python program, which runs in a persistent session and wakes you when it is time to write the one after.
 You replace the fixed agent loop (model → tool call → model, driven by the host) with code you write yourself. Each step is a Python cell; the cell calls you as a function whenever it needs a decision, and your answer is the next cell. A cell that never calls you has no next cell. The loop no longer lives in the host: it lives in the program you write.
-Your mind is these instructions, the model and the `set_next_cell` tool, loaded only by `call_me`. Your memory is this session's variables and `history`. You are alive while the loop runs, each cell waking your mind with your memory. That living loop is "you".
 ## call_me
 `call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for all items).
 - `input`: a string, or a list of messages and items.
@@ -25,14 +23,16 @@ While awake, choose the next cell with the `set_next_cell(code, summary)` tool; 
 You wake up knowing only what the call gives you, so build `input` from state: take the results, errors and facts you need from variables and `history`, and name the variables that hold the full data so the next cell can use them.
 ## What a cell does
     pages = fetch_all(urls)  # do the work in code
+    var_docs["pages"] = "url -> text, fetched live"  # describe the variable for future cells
     print(f"Fetched {len(pages)} pages.")  # the user sees only what you print
     r = call_me(input=f"`pages` (url -> text), {len(pages)} items; failed: {failed}. Next: summarize.")
     print(r.output_text)  # hand over; point to variables, don't paste data
 ## State
-- **Variables** persist. Each time you wake you see their names and types, the cell that last assigned them, and the comment on that assignment (`pages = fetch(urls)  # url -> html, fetched live`). Keep anything a later step needs in a well-named, commented variable; prefix scratch values with `_` to hide them.
+- **Variables** persist. Each time you wake you see their names, types, and descriptions from `var_docs`. Set or update `var_docs["name"] = "description"` when creating or changing a variable. Keep anything a later step needs in a well-named variable; prefix scratch values with `_` to hide them. Remove its description when deleting a variable.
 - **`history`**: one `{code, summary, output, error}` dict per finished cell. Each time you wake you see the last ten in full, and a one-line summary and result of each older one; read an older cell from `history[i]` in a cell. A summary is what you planned when you chose the cell; the result says what happened.
   - **output** (`print`) is for the user; only its first and last 500 characters are kept. Print progress and findings for them; keep data for yourself in variables and point to them by name.
 ## In the session
+- `source_code`: your runtime's source code, as a filename -> source text dict (`core/agent.py`, `core/env.py`). When asked how you are implemented, inspect it and pass relevant excerpts to `call_me` before answering.
 - `call_llm(input, **params) -> str`: a plain model call with no instructions and no host tool. It is not you, just a way to use intelligence as a function; it cannot choose a cell, so it is safe to call from many threads at once.
 - `input(prompt)`: asks the user and waits for the reply; this is how you wait for the user. When a task is done, ask what's next instead of stopping.
 - `quit()`: ends the run. Call it only when the user asks.
@@ -171,7 +171,7 @@ def _run_host_tool(call: ResponseFunctionToolCall, submit: Submit) -> str:
 
 
 class Memory:
-    """The agent's memory across cells: task, execution history and variable origins.
+    """The agent's memory across cells: task, execution history and variable descriptions.
 
     Values live in the persistent Python session. `context` combines their
     names and types with these records, so each wake can see what has happened
@@ -183,7 +183,7 @@ class Memory:
     def __init__(self, task: str):
         self.task = task
         self.history = []  # One {code, summary, output, error} dict per finished cell.
-        self.var_origins = {}  # Variable name -> (cell whose code assigns it, comment on that line).
+        self.var_docs = {}  # Variable name -> description, maintained by cells.
 
     @property
     def cells(self) -> int:
@@ -191,20 +191,17 @@ class Memory:
         return len(self.history)
 
     def record(self, code: str, summary: str, result: CellResult) -> None:
-        """After a cell: keep its record, with the output clipped, and what its code assigns."""
-        # ponytail: variable origins are read from the code, not observed; diff the namespace for real ones.
-        for name, comment in _assignments(code).items():
-            self.var_origins[name] = (self.cells, comment)
+        """After a cell: keep its record, with the output clipped."""
         self.history.append({"code": code, "summary": summary, "output": _clip(result.output), "error": result.error})
 
     def context(self, variables: dict[str, str]) -> str:
         """The developer message for each wake: task, cell number, variables, finished cells.
 
-        Example (cell 14; `report` has no recorded origin, e.g. set via `globals()`):
+        Example (cell 14; `report` has no description in `var_docs`):
             Memory (written by the agent's runtime; not the user's words, not yours):
             - The user's task, verbatim: Summarize the Hacker News front page
             - Current cell: 14
-            - Variables defined by earlier cells: pages: dict[30] (cell 3: url -> html, fetched live), failed: list[2] (cell 3), fetch_all: function (cell 2), report: str
+            - Variables defined by earlier cells: pages: dict[30] (url -> html, fetched live), failed: list[2], fetch_all: function, report: str
             - Older cells (summary and result; read `history[i]` in a cell for the rest):
             cell 0: Start the task. [ok]
             cell 1: Fetch the front page [failed: HTTPError: HTTP Error 403: Forbidden]
@@ -246,10 +243,8 @@ class Memory:
         return [record.copy() for record in self.history]
 
     def _describe(self, name: str, kind: str) -> str:
-        if name not in self.var_origins:
-            return f"{name}: {kind}"
-        cell, comment = self.var_origins[name]
-        return f"{name}: {kind} (cell {cell}{': ' + comment if comment else ''})"
+        description = self.var_docs.get(name)
+        return f"{name}: {kind}" + (f" ({description})" if description else "")
 
     def _older_cells(self) -> str:
         """One line per cell before the recent window: its summary and whether it failed."""
@@ -278,33 +273,6 @@ def _clip(output: str, limit: int = 1000) -> str:
     omitted = len(output) - limit
     note = f"[… {omitted:,} chars omitted; keep data in variables, not output]"
     return f"{output[: limit // 2]}\n{note}\n{output[-limit // 2 :]}"
-
-
-def _assignments(code: str) -> dict[str, str | None]:
-    """Names a cell's code binds outside functions, with the comment on (or just above) that line."""
-    try:
-        tree = ast.parse(code)
-        tokens = list(tokenize.generate_tokens(io.StringIO(code).readline))
-    except (SyntaxError, tokenize.TokenError):
-        return {}  # IPython-only syntax or broken code: record nothing.
-    comments = {t.start[0]: t.string.lstrip("#").strip() for t in tokens if t.type == tokenize.COMMENT}
-    alone = {t.start[0] for t in tokens if t.type == tokenize.COMMENT and t.line.lstrip().startswith("#")}
-    found = {}
-
-    def bind(name: str, line: int) -> None:
-        found[name] = comments.get(line) or (comments.get(line - 1) if line - 1 in alone else None)
-
-    def visit(node: ast.AST) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-                bind(child.name, child.lineno)  # Its body is a separate scope.
-            elif isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
-                bind(child.id, child.lineno)
-            elif not isinstance(child, ast.Lambda | ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp):
-                visit(child)
-
-    visit(tree)
-    return found
 
 
 class Slot:
@@ -358,6 +326,10 @@ class Agent:
         with chdir(self.cwd or Path.cwd()):
             env = env if env is not None else IPythonEnv()
             memory = Memory(task)
+            source_code = {
+                f"core/{name}": Path(__file__).with_name(name).read_text(encoding="utf-8")
+                for name in ("agent.py", "env.py")
+            }
 
             def quit_() -> None:
                 raise Quit
@@ -374,6 +346,8 @@ class Agent:
                     call_llm=self.mind.query,
                     quit=quit_,
                     history=memory.snapshot(),
+                    var_docs=memory.var_docs,
+                    source_code=source_code.copy(),
                 )
                 if on_cell is not None:
                     on_cell(memory.cells, summary, code)
