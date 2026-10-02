@@ -27,10 +27,20 @@ Requires Python 3.12+ and `uv`.
 
    Enter your task in the TUI after it opens.
 
-Press **Enter** to send a message and **Ctrl+C** to exit.
+   Press **Enter** to send a message and **Ctrl+C** to exit.
 
-Cells and outputs are automatically saved to `~/.fibona/<session_id>/session.ipynb`.
-Click `notebook` in the status bar to copy its path.
+   Cells and outputs are automatically saved to `~/.fibona/<session_id>/session.ipynb`.
+   Click `notebook` in the status bar to copy its path.
+
+3. Or start from scratch and let the agent build its own TUI:
+
+   ```bash
+   uv run --env-file .env fibona.py "Build and launch your own polished chat TUI: refined dark theme, clean spacing, scrollable conversation, multiline input, and clear activity status. Let me chat with you in it."
+   ```
+
+   `uv` loads `.env`; no `tui` extra is needed. The agent works in the current directory,
+   prints directly to the console, and reads replies from standard input. It asks what's
+   next when a task is done; press **Ctrl+C** to exit. This mode does not save a notebook.
 
 ## Use the core as a library
 
