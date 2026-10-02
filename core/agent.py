@@ -14,7 +14,7 @@ from core.utils import create_run_log, log_wake
 INSTRUCTIONS = """
 You are the Fibona agent.
 
-You act only by writing the next cell of a Python program, which runs in a persistent session and call you back
+You act only by writing the next cell of a Python program, which runs in a persistent session and calls you back
 to write the one after.
 
 You replace the fixed agent loop (model → tool call → model, driven by the host) with code you write yourself.
@@ -61,8 +61,8 @@ can use them.
     pages = fetch_all(urls)  # do the work in code
     var_docs["pages"] = "url -> text, fetched live"  # describe the variable for future cells
     print(f"Fetched {len(pages)} pages.")  # the user sees only what you print
-    r = call_me(input=f"`pages` (url -> text), {len(pages)} items; failed: {failed}. Next: summarize.")
-    print(r.output_text)  # hand over; point to variables, don't paste data
+    r = call_me(input=f"`pages` (url -> text), {len(pages)} items. Next: summarize.")
+    print(r.output_text)  # show the reply to the user
 
 
 ## State
@@ -83,7 +83,7 @@ can use them.
 - `source_code`: your runtime's source code, as a filename -> source text dict (`core/agent.py`,
   `core/env.py`, `core/utils.py`, `terminal.py`). Read it directly to understand your runtime or terminal UI, and pass relevant
   excerpts to `call_me`.
-- `call_llm_api(input, **params) -> str`: a plain model call with no instructions and no host tool. It is not
+- `call_llm_api(input, **params) -> str`: a plain model call without your predefined instructions or host tool. It is not
   you, just a way to use intelligence as a function; it cannot choose a cell, so it is safe to call from many
   threads at once.
 - `input(prompt)`: asks the user and waits for the reply; use it when you need user input or are ready
@@ -116,7 +116,7 @@ SET_NEXT_CELL = {
     },
 }
 
-# Request fields the mind fixes; callers of `call_me` cannot override them.
+# Fields normalized or fixed by wake; extra_body must not override them.
 PROTECTED = {
     "model",
     "instructions",
@@ -144,18 +144,18 @@ class Mind:
         self.client, self.model, self.instructions = client, model, instructions
 
     @log_wake
-    def wake(self, *, submit: Submit, context: Callable[[], str], **body) -> Response:
+    def wake(self, input=(), *, submit: Submit, context: Callable[[], str], **body) -> Response:
         """Wake the mind. Exposed to cells as `call_me`.
 
-        body: keyword arguments of `client.responses.create`. Commonly used:
-            input: a string, or a list of input items (messages, function_call_output, ...).
+        input: a string or list of input items, passed positionally or by keyword; defaults to empty.
+        body: other keyword arguments of `client.responses.create`. Commonly used:
             tools: the caller's own tools; `set_next_cell` is always appended.
             tool_choice: "auto" / "required" / "none", or a specific tool.
             text: output format, e.g. {"format": {"type": "json_object"}}.
             max_output_tokens: cap on generated tokens, reasoning included.
             include: extra output data; "reasoning.encrypted_content" is always added.
             metadata, ...: passed through unchanged.
-          Fixed by the mind (caller values are ignored):
+          Normalized or fixed by the mind:
             model, instructions: the mind itself.
             reasoning: only `effort` is kept, raised to at least "medium".
             stream, background: always off; the full Response is returned.
@@ -166,6 +166,7 @@ class Mind:
         submit: where `set_next_cell(code, summary)` lands. The agent binds a fresh one
             per cell, so a late call from a finished cell cannot choose the next one.
         context: what the mind sees of its memory, sent first as a developer message.
+        extra_body cannot override fields in PROTECTED.
 
         Example (agent side, before each cell runs):
             slot = Slot()
@@ -176,10 +177,11 @@ class Mind:
             print(r.output_text)
         """
         effort = (body.get("reasoning") or {}).get("effort")
-        items = [{"role": "developer", "content": context()}, *_input_items(body.get("input", []))]
+        items = [{"role": "developer", "content": context()}, *_input_items(input)]
         tools = [t for t in body.get("tools", []) if t.get("name") != SET_NEXT_CELL["name"]]
         body = {k: v for k, v in body.items() if k not in PROTECTED}
-        # TODO: filter PROTECTED fields from extra_body before passing it to the SDK.
+        if body.get("extra_body") is not None:
+            body["extra_body"] = {k: v for k, v in body["extra_body"].items() if k not in PROTECTED}
         body.update(
             model=self.model,
             instructions=self.instructions,
@@ -208,7 +210,7 @@ class Mind:
     def query(self, input, **params) -> str:
         """A plain model call used as a function (summarize, extract, classify, ...).
 
-        No instructions and no host tool, so it is not the mind, can never choose a cell and is
+        No predefined agent instructions or host tool are added, so it cannot schedule a cell and is
         safe to call concurrently. Exposed to cells as `call_llm_api`; returns the reply text.
 
         Example (cell side):
@@ -333,7 +335,7 @@ class Memory:
 
 
 def _clip(output: str, limit: int = 1000) -> str:
-    """A cell's output as kept in history: head and tail only. The user already saw all of it."""
+    """Keep short output intact; retain only the head and tail of long output in history."""
     if len(output) <= limit:
         return output
     omitted = len(output) - limit
@@ -382,7 +384,7 @@ class Agent:
         max_failures: int = 3,
         debug: bool = False,
     ) -> None:
-        """One life: a fresh session and memory, then cells one after another until one quits
+        """One life: fresh memory and a supplied or new session, running cells until one quits
         (a trampoline: each cell only chooses the next one, and this loop runs them all).
 
         Pass an environment for input/output and an on_cell callback to observe execution.
@@ -390,6 +392,7 @@ class Agent:
         on_result receives each cell's final validated result, including the cell that quits.
         The configured cwd must exist; the caller's working directory is restored afterward.
         With debug=True, cells and call_me calls are logged to agent.log in that directory.
+        Raises RuntimeError after max_failures consecutive failed cells; interruptions propagate.
         """
         with chdir(self.cwd or Path.cwd()):
             log = create_run_log("agent.log", key=self.mind.client.api_key) if debug else None
@@ -408,7 +411,7 @@ class Agent:
             failures = 0
             while True:
                 slot = Slot()
-                # Rebind every cell, so a cell that overwrites or mutates these cannot break later cells.
+                # Restore runtime bindings each cell; mutations to shared objects still persist.
                 env.bind(
                     call_me=partial(
                         self.mind.wake,

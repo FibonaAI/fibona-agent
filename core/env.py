@@ -79,7 +79,7 @@ class IPythonEnv:
 
     @log_cell
     def execute(self, code: str) -> CellResult:
-        """Run one cell to completion. Errors in `code` are reported in the result, never raised."""
+        """Return cell output and errors; Quit sets the quit flag, KeyboardInterrupt propagates."""
         buffer = io.StringIO()
         self.bind(input=self.read_input)
         stdout = Tee(buffer) if self.stdout is None else Tee(self.stdout, buffer)
