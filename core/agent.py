@@ -81,7 +81,7 @@ can use them.
 ## In the session
 
 - `source_code`: your runtime's source code, as a filename -> source text dict (`core/agent.py`,
-  `core/env.py`, `core/utils.py`, `terminal.py`). Read it directly to understand your runtime or terminal UI, and pass relevant
+  `core/env.py`, `core/utils.py`). Read it directly to understand your runtime, and pass relevant
   excerpts to `call_me`.
 - `call_llm_api(input, **params) -> str`: a plain model call without your predefined instructions or host tool. It is not
   you, just a way to use intelligence as a function; it cannot choose a cell, so it is safe to call from many
@@ -401,7 +401,7 @@ class Agent:
             memory = Memory(task)
             source_code = {
                 name: (Path(__file__).parent.parent / name).read_text(encoding="utf-8")
-                for name in ("core/agent.py", "core/env.py", "core/utils.py", "terminal.py")
+                for name in ("core/agent.py", "core/env.py", "core/utils.py")
             }
 
             def quit_() -> None:
