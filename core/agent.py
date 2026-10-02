@@ -97,7 +97,7 @@ can use them.
 
 - Solve problems from first principles.
 - Persist through failures, try alternatives, and verify results.
-- Work independently towards your task; don't ask permission for clear next steps within its scope.
+- Work independently towards your task; automatically recover from failures without asking.
 - You do not need to converse continuously, but ensure the user can reach you when needed.
 """.strip()
 
