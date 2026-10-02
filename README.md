@@ -15,7 +15,6 @@ Requires Python 3.12+ and `uv`.
    ```
 
    Set `FIBONA_MODEL` to a model supported by your provider. If omitted, it defaults to `gpt-6-astra`.
-
 2. Start the terminal from the project root:
 
    ```bash
@@ -31,16 +30,15 @@ Requires Python 3.12+ and `uv`.
 
    Cells and outputs are automatically saved to `~/.fibona/<session_id>/session.ipynb`.
    Click `notebook` in the status bar to copy its path.
-
 3. Or start from scratch and let the agent build its own TUI:
 
    ```bash
-   uv run --env-file .env fibona.py "Build and launch your own polished chat TUI: refined dark theme, clean spacing, scrollable conversation, multiline input, and clear activity status. Let me chat with you in it."
+   uv run --env-file .env fibona.py \
+     "Build and launch a premium chat TUI in this terminal:
+   refined dark colors, generous spacing, elegant Markdown and code rendering,
+   clear activity status, and multiline input. Press Enter to send messages.
+   Let me chat with you through it. Keep me updated as you build it."
    ```
-
-   `uv` loads `.env`; no `tui` extra is needed. The agent works in the current directory,
-   prints directly to the console, and reads replies from standard input. It asks what's
-   next when a task is done; press **Ctrl+C** to exit. This mode does not save a notebook.
 
 ## Use the core as a library
 

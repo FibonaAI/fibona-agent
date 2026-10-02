@@ -1,3 +1,4 @@
+import argparse
 import io
 import os
 import sys
@@ -85,7 +86,8 @@ class Terminal(App):
     #keys { height: 1; color: #9494a4; }
     """
 
-    def __init__(self):
+    def __init__(self, *, debug: bool = False):
+        self.debug_logging = debug
         load_dotenv(".env")
         super().__init__()
         self.session_id = uuid4().hex
@@ -337,7 +339,9 @@ Access UI through `terminal.call_from_thread(callback, *args, **kwargs)`; callba
                 create = client.responses.create
                 client.responses.create = create_response
                 mind = Mind(client=client, model=self.model, instructions=instructions)
-                Agent(mind, cwd=self.cwd).run(task, env=env, on_cell=on_cell, on_result=on_result)
+                Agent(mind, cwd=self.cwd).run(
+                    task, env=env, on_cell=on_cell, on_result=on_result, debug=self.debug_logging
+                )
             send(("done",))
         except KeyboardInterrupt:
             send(("error", "Execution interrupted."))
@@ -374,7 +378,10 @@ Access UI through `terminal.call_from_thread(callback, *args, **kwargs)`; callba
 
 
 def main() -> int:
-    app = Terminal()
+    parser = argparse.ArgumentParser(description="Run the Fibona terminal UI.")
+    parser.add_argument("--debug", action="store_true", help="Record cells and model calls in agent.log.")
+    args = parser.parse_args()
+    app = Terminal(debug=args.debug)
     stdout, stderr = sys.stdout, sys.stderr
     try:
         app.run()

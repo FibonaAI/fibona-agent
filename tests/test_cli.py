@@ -38,3 +38,25 @@ class CliTest(unittest.TestCase):
                 fibona.main()
             self.assertEqual(error.exception.code, 2)
             client.assert_not_called()
+
+    def test_debug_flag_in_both_entrypoints(self):
+        import terminal
+
+        for enabled in (False, True):
+            flags = ["--debug"] if enabled else []
+            with (
+                self.subTest(enabled=enabled),
+                patch("sys.argv", ["fibona", *flags, "task"]),
+                patch.object(fibona, "OpenAI"),
+                patch.object(fibona, "Agent") as agent,
+            ):
+                fibona.main()
+                self.assertEqual(agent.return_value.run.call_args.kwargs["debug"], enabled)
+            with (
+                self.subTest(terminal=True, enabled=enabled),
+                patch("sys.argv", ["terminal", *flags]),
+                patch.object(terminal, "Terminal") as app,
+            ):
+                app.return_value.thread = None
+                terminal.main()
+                app.assert_called_once_with(debug=enabled)
