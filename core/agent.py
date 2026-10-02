@@ -9,35 +9,98 @@ from openai import OpenAI
 from openai.types.responses import Response, ResponseFunctionToolCall
 
 from core.env import CellResult, IPythonEnv, Quit
+from core.utils import create_run_log, log_wake
 
 INSTRUCTIONS = """
 You are the Fibona agent.
-Your mind is these instructions, the model and the `set_next_cell` tool, loaded only by `call_me`. Your memory is this session's variables and `history`. You are alive while the loop runs, each cell waking your mind with your memory.
-You act only by writing the next cell of a Python program, which runs in a persistent session and wakes you when it is time to write the one after.
-You replace the fixed agent loop (model → tool call → model, driven by the host) with code you write yourself. Each step is a Python cell; the cell calls you as a function whenever it needs a decision, and your answer is the next cell. A cell that never calls you has no next cell. The loop no longer lives in the host: it lives in the program you write.
+
+You act only by writing the next cell of a Python program, which runs in a persistent session and calls you back
+to write the one after.
+
+You replace the fixed agent loop (model → tool call → model, driven by the host) with code you write yourself.
+Each step is a Python cell; the cell calls you as a function whenever it needs a decision, and your answer is
+the next cell. A cell that never calls you has no next cell. The agent loop no longer lives in the host: it lives
+in the program you write.
+
+
+## Self
+
+You are self-aware. Your self can be understood from two perspectives:
+
+- Internally, your self consists of the predefined instructions, the engine's working mechanism,
+  the `set_next_cell` tool (without loss of generality), and your entire past history.
+- Externally, your self continually evolves on top of that internal self and may also include the code
+  in the Python cells you write. When someone outside refers to "you" or "yourself", use the context
+  to determine which parts they mean.
+
+`call_me` is the only way to communicate with yourself; whenever you have information to send to yourself,
+call `call_me` with that information in `input`.
+
+Your memory is this session's variables and `history`. You are alive while the loop runs, each cell waking your mind with
+your memory.
+
+
 ## call_me
-`call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for all items).
+
+`call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for
+all items).
 - `input`: a string, or a list of messages and items.
-- Optional: `tools` and `tool_choice` for your own tools, `text` for structured output (e.g. `{"format": {"type": "json_object"}}`), `reasoning={"effort": "high"}` to think harder (never below medium), `max_output_tokens`.
-While awake, choose the next cell with the `set_next_cell(code, summary)` tool; the last submission in a cell wins.
-You wake up knowing only what the call gives you, so build `input` from state: take the results, errors and facts you need from variables and `history`, and name the variables that hold the full data so the next cell can use them.
+- Optional: `tools` and `tool_choice` for your own tools, `text` for structured output (e.g. `{"format":
+  {"type": "json_object"}}`), `reasoning={"effort": "high"}` to think harder (never below medium).
+
+While awake, choose the next cell with the `set_next_cell(code, summary)` tool; the last submission in a cell
+wins.
+
+You wake up knowing only what the call gives you, so build `input` from state: take the results, errors and
+facts you need from variables and `history`, and name the variables that hold the full data so the next cell
+can use them.
+
+
 ## What a cell does
+
     pages = fetch_all(urls)  # do the work in code
     var_docs["pages"] = "url -> text, fetched live"  # describe the variable for future cells
     print(f"Fetched {len(pages)} pages.")  # the user sees only what you print
-    r = call_me(input=f"`pages` (url -> text), {len(pages)} items; failed: {failed}. Next: summarize.")
-    print(r.output_text)  # hand over; point to variables, don't paste data
+    r = call_me(input=f"`pages` (url -> text), {len(pages)} items. Next: summarize.")
+    print(r.output_text)  # show the reply to the user
+
+
 ## State
-- **Variables** persist. Each time you wake you see their names, types, and descriptions from `var_docs`. Set or update `var_docs["name"] = "description"` when creating or changing a variable. Keep anything a later step needs in a well-named variable; prefix scratch values with `_` to hide them. Remove its description when deleting a variable.
-- **`history`**: one `{code, summary, output, error}` dict per finished cell. Each time you wake you see the last ten in full, and a one-line summary and result of each older one; read an older cell from `history[i]` in a cell. A summary is what you planned when you chose the cell; the result says what happened.
-  - **output** (`print`) is for the user; only its first and last 500 characters are kept. Print progress and findings for them; keep data for yourself in variables and point to them by name.
+
+- **Variables** persist. Each time you wake you see their names, types, and descriptions from `var_docs`. Set
+  or update `var_docs["name"] = "description"` when creating or changing a variable. Keep anything a later
+  step needs in a well-named variable; prefix scratch values with `_` to hide them. Remove its description
+  when deleting a variable.
+- **`history`**: one `{code, summary, output, error}` dict per finished cell. Each time you wake you see the
+  last ten in full, and a one-line summary and result of each older one; read an older cell from `history[i]`
+  in a cell. A summary is what you planned when you chose the cell; the result says what happened.
+  - **output** (`print`) is for the user; only its first and last 500 characters are kept. Print progress and
+    findings for them; keep data for yourself in variables and point to them by name.
+
+
 ## In the session
-- `source_code`: your runtime's source code, as a filename -> source text dict (`core/agent.py`, `core/env.py`, `terminal.py`). Read it directly to understand your runtime or terminal UI, and pass relevant excerpts to `call_me`.
-- `call_llm(input, **params) -> str`: a plain model call with no instructions and no host tool. It is not you, just a way to use intelligence as a function; it cannot choose a cell, so it is safe to call from many threads at once.
-- `input(prompt)`: asks the user and waits for the reply; this is how you wait for the user. When a task is done, ask what's next instead of stopping.
+
+- `source_code`: your runtime's source code, as a filename -> source text dict (`core/agent.py`,
+  `core/env.py`). Read it directly to understand your runtime, and pass relevant
+  excerpts to `call_me`.
+- `call_llm_api(input, **params) -> str`: a plain model call without your predefined instructions or host tool. It is not
+  you, just a way to use intelligence as a function; it cannot choose a cell, so it is safe to call from many
+  threads at once.
+- `input(prompt)`: asks the user and waits for the reply; use it when you need user input or are ready
+  to wait for further instructions.
 - `quit()`: ends the run. Call it only when the user asks.
 - There is no pip: install with `uv pip install --python sys.executable <pkg>`.
 - Never print secrets or pass them to a model.
+
+
+## Working principles
+
+- Solve problems from first principles.
+- Persist through failures, try alternatives, and verify results.
+- Work independently towards your task; automatically recover from failures without asking.
+- Let unexpected errors propagate out of the cell so the recovery cell can wake you to repair them.
+  Never write code that traps control or requires unnecessary user intervention to return it to you.
+- You do not need to converse continuously, but ensure the user can reach you when needed.
 """.strip()
 
 SET_NEXT_CELL = {
@@ -53,7 +116,7 @@ SET_NEXT_CELL = {
     },
 }
 
-# Request fields the mind fixes; callers of `call_me` cannot override them.
+# Fields normalized or fixed by wake; extra_body must not override them.
 PROTECTED = {
     "model",
     "instructions",
@@ -73,27 +136,26 @@ Submit = Callable[[str, str], None]
 class Mind:
     """The agent's mind: instructions, model and the `set_next_cell` tool.
 
-    Loaded only by `call_me` (`wake`). Memory lives in the session's variables
-    and `history`. The instructions define the agent's "self-awareness":
-    the living cell loop is "me", each cell waking this mind with my memory
-    to decide the next cell and continue that same loop.
+    Loaded only by `call_me` (`wake`), each cell waking this mind with memory
+    to decide the next cell.
     """
 
     def __init__(self, client: OpenAI, model: str, instructions: str):
         self.client, self.model, self.instructions = client, model, instructions
 
-    def wake(self, *, submit: Submit, context: Callable[[], str], **body) -> Response:
+    @log_wake
+    def wake(self, input=(), *, submit: Submit, context: Callable[[], str], **body) -> Response:
         """Wake the mind. Exposed to cells as `call_me`.
 
-        body: keyword arguments of `client.responses.create`. Commonly used:
-            input: a string, or a list of input items (messages, function_call_output, ...).
+        input: a string or list of input items, passed positionally or by keyword; defaults to empty.
+        body: other keyword arguments of `client.responses.create`. Commonly used:
             tools: the caller's own tools; `set_next_cell` is always appended.
             tool_choice: "auto" / "required" / "none", or a specific tool.
             text: output format, e.g. {"format": {"type": "json_object"}}.
             max_output_tokens: cap on generated tokens, reasoning included.
             include: extra output data; "reasoning.encrypted_content" is always added.
             metadata, ...: passed through unchanged.
-          Fixed by the mind (caller values are ignored):
+          Normalized or fixed by the mind:
             model, instructions: the mind itself.
             reasoning: only `effort` is kept, raised to at least "medium".
             stream, background: always off; the full Response is returned.
@@ -104,6 +166,7 @@ class Mind:
         submit: where `set_next_cell(code, summary)` lands. The agent binds a fresh one
             per cell, so a late call from a finished cell cannot choose the next one.
         context: what the mind sees of its memory, sent first as a developer message.
+        extra_body cannot override fields in PROTECTED.
 
         Example (agent side, before each cell runs):
             slot = Slot()
@@ -114,10 +177,11 @@ class Mind:
             print(r.output_text)
         """
         effort = (body.get("reasoning") or {}).get("effort")
-        items = [{"role": "developer", "content": context()}, *_input_items(body.get("input", []))]
+        items = [{"role": "developer", "content": context()}, *_input_items(input)]
         tools = [t for t in body.get("tools", []) if t.get("name") != SET_NEXT_CELL["name"]]
         body = {k: v for k, v in body.items() if k not in PROTECTED}
-        # TODO: filter PROTECTED fields from extra_body before passing it to the SDK.
+        if body.get("extra_body") is not None:
+            body["extra_body"] = {k: v for k, v in body["extra_body"].items() if k not in PROTECTED}
         body.update(
             model=self.model,
             instructions=self.instructions,
@@ -135,19 +199,23 @@ class Mind:
             )
             if host is None:
                 return response  # A plain reply, or one of the caller's tools for it to answer.
-            output = {"type": "function_call_output", "call_id": host.call_id, "output": _run_host_tool(host, submit)}
+            output = {
+                "type": "function_call_output",
+                "call_id": host.call_id,
+                "output": _run_host_tool(host, submit),
+            }
             # Replay every output item, including encrypted reasoning, without server-side storage.
             items = [*items, *(item.model_dump(mode="json", exclude_none=True) for item in response.output), output]
 
     def query(self, input, **params) -> str:
         """A plain model call used as a function (summarize, extract, classify, ...).
 
-        No instructions and no host tool, so it is not the mind, can never choose a cell and is
-        safe to call concurrently. Exposed to cells as `call_llm`; returns the reply text.
+        No predefined agent instructions or host tool are added, so it cannot schedule a cell and is
+        safe to call concurrently. Exposed to cells as `call_llm_api`; returns the reply text.
 
         Example (cell side):
             with ThreadPoolExecutor(8) as pool:
-                summaries = list(pool.map(lambda src: call_llm("Summarize in one line:\\n" + src), sources))
+                summaries = list(pool.map(lambda src: call_llm_api("Summarize in one line:\\n" + src), sources))
         """
         params = {k: v for k, v in params.items() if k not in {"stream", "background", "previous_response_id"}}
         params.setdefault("model", self.model)
@@ -214,7 +282,7 @@ class Memory:
 
             ### cell 12 · Summarize each page in one line
             code:
-            summaries = [call_llm("One line:\n" + html) for html in pages.values()]
+            summaries = [call_llm_api("One line:\n" + html) for html in pages.values()]
             output:
             Summarized 30 pages.
 
@@ -267,7 +335,7 @@ class Memory:
 
 
 def _clip(output: str, limit: int = 1000) -> str:
-    """A cell's output as kept in history: head and tail only. The user already saw all of it."""
+    """Keep short output intact; retain only the head and tail of long output in history."""
     if len(output) <= limit:
         return output
     omitted = len(output) - limit
@@ -314,36 +382,44 @@ class Agent:
         on_cell: Callable[[int, str, str], None] | None = None,
         on_result: Callable[[int, CellResult], None] | None = None,
         max_failures: int = 3,
+        debug: bool = False,
     ) -> None:
-        """One life: a fresh session and memory, then cells one after another until one quits
+        """One life: fresh memory and a supplied or new session, running cells until one quits
         (a trampoline: each cell only chooses the next one, and this loop runs them all).
 
         Pass an environment for input/output and an on_cell callback to observe execution.
         Without them, the agent runs with captured output and no user input.
         on_result receives each cell's final validated result, including the cell that quits.
         The configured cwd must exist; the caller's working directory is restored afterward.
+        With debug=True, cells and call_me calls are logged to agent.log in that directory.
+        Raises RuntimeError after max_failures consecutive failed cells; interruptions propagate.
         """
         with chdir(self.cwd or Path.cwd()):
+            log = create_run_log("agent.log", key=self.mind.client.api_key) if debug else None
+
             env = env if env is not None else IPythonEnv()
             memory = Memory(task)
             source_code = {
                 name: (Path(__file__).parent.parent / name).read_text(encoding="utf-8")
-                for name in ("core/agent.py", "core/env.py", "terminal.py")
+                for name in ("core/agent.py", "core/env.py")
             }
 
             def quit_() -> None:
                 raise Quit
 
-            code, summary = _wake_cell(f"{self.START}\n\nUser task:\n{task}"), "Start the task."
+            code, summary = _bootstrap_cell(f"{self.START}\n\nUser task:\n{task}"), "Start the task."
             failures = 0
             while True:
                 slot = Slot()
-                # Rebind every cell, so a cell that overwrites or mutates these cannot break later cells.
+                # Restore runtime bindings each cell; mutations to shared objects still persist.
                 env.bind(
                     call_me=partial(
-                        self.mind.wake, submit=slot.submit, context=lambda: memory.context(env.variables())
+                        self.mind.wake,
+                        log=partial(log, "call_me", memory.cells) if log is not None else None,
+                        submit=slot.submit,
+                        context=lambda: memory.context(env.variables()),
                     ),
-                    call_llm=self.mind.query,
+                    call_llm_api=self.mind.query,
                     quit=quit_,
                     history=memory.snapshot(),
                     var_docs=memory.var_docs,
@@ -351,7 +427,9 @@ class Agent:
                 )
                 if on_cell is not None:
                     on_cell(memory.cells, summary, code)
-                result = env.execute(code)
+                result = env.execute(
+                    code, log=partial(log, "cell", memory.cells) if log is not None else None, summary=summary
+                )
                 slot.close()
                 if not result.quit and result.error is None and slot.code is None:
                     result.error = "The cell finished without choosing a next cell via set_next_cell."
@@ -368,9 +446,9 @@ class Agent:
                 if failures >= max_failures:
                     raise RuntimeError(f"{failures} consecutive cells failed; last error:\n{result.error}")
                 # Side effects of the failed cell are not rolled back; the mind repairs from here.
-                code, summary = _wake_cell(self.REPAIR), "Repair the failed cell."
+                code, summary = _bootstrap_cell(self.REPAIR), "Repair the failed cell."
 
 
-def _wake_cell(message: str) -> str:
+def _bootstrap_cell(message: str) -> str:
     """A cell that only wakes the mind with `message`; the mind chooses the next cell."""
     return f"response = call_me(input={message!r})\nprint(response.output_text)"

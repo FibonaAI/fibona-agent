@@ -16,7 +16,7 @@ tui = [
 ]
 
 [project.scripts]
-fibona = "terminal:main"
+fibona = "fibona:main"
 
 [build-system]
 requires = ["setuptools>=68"]
