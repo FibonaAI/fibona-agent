@@ -1,5 +1,9 @@
 # Fibona Agent
 
+Fibona Agent is **a minimal, general-purpose, self-improving agent** that writes its own code as it runs.
+
+It starts with only a tiny, general-purpose core, which we define as its "self." From this core, it can build its entire system step by step, becoming whatever it needs to be to get the task done. When something goes wrong, it can repair itself and return to a working state autonomously.
+
 ## Quick start
 
 Requires Python 3.12+ and `uv`.
