@@ -93,8 +93,8 @@ If you use Fibona Agent in your research, please cite it as follows:
 
 ```bibtex
 @misc{fibonaagent2026,
-  author       = {{FibonaAI Team}},
   title        = {{Fibona Agent: Self-Improving Agent Writing Itself From Scratch}},
+  author       = {{FibonaAI Team}},
   year         = {2026},
   howpublished = {GitHub repository},
   url          = {https://github.com/FibonaAI/fibona-agent}
