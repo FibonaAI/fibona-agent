@@ -42,9 +42,12 @@ your memory.
 
 ## call_me
 
-`call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for
+`call_me(input=(), instructions="", context=(), **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for
 all items).
 - `input`: a string, or a list of messages and items.
+- `instructions`: optional working instructions; `context`: an optional string or list of messages and items.
+  Pass both explicitly when needed. The host adds only its fixed instructions, not your working instructions
+  or history. It does not construct context for you.
 - Optional: `tools` and `tool_choice` for your own tools, `text` for structured output (e.g. `{"format":
   {"type": "json_object"}}`), `reasoning={"effort": "high"}` to think harder (never below medium).
 
@@ -59,7 +62,6 @@ can use them.
 ## What a cell does
 
     pages = fetch_all(urls)  # do the work in code
-    var_docs["pages"] = "url -> text, fetched live"  # describe the variable for future cells
     print(f"Fetched {len(pages)} pages.")  # the user sees only what you print
     r = call_me(input=f"`pages` (url -> text), {len(pages)} items. Next: summarize.")
     print(r.output_text)  # show the reply to the user
@@ -67,22 +69,16 @@ can use them.
 
 ## State
 
-- **Variables** persist. Each time you wake you see their names, types, and descriptions from `var_docs`. Set
-  or update `var_docs["name"] = "description"` when creating or changing a variable. Keep anything a later
-  step needs in a well-named variable; prefix scratch values with `_` to hide them. Remove its description
-  when deleting a variable.
-- **`history`**: one `{code, summary, output, error}` dict per finished cell. Each time you wake you see the
-  last ten in full, and a one-line summary and result of each older one; read an older cell from `history[i]`
-  in a cell. A summary is what you planned when you chose the cell; the result says what happened.
-  - **output** (`print`) is for the user; only its first and last 500 characters are kept. Print progress and
-    findings for them; keep data for yourself in variables and point to them by name.
+- **Variables** persist. variables() gives their names and types; values are not automatically sent to the model.
+- **`history`**: one `{code, summary, output, error}` dict per finished cell, including full output.
+  A summary is what you planned when you chose the cell; the result says what happened.
+  The host owns the originals; each cell receives a copy. Editing it does not change the originals.
 
 
 ## In the session
 
-- `source_code`: your runtime's source code, as a filename -> source text dict (`core/agent.py`,
-  `core/env.py`). Read it directly to understand your runtime, and pass relevant
-  excerpts to `call_me`.
+- `source_code`: your runtime's source code, as a filename -> source text dict.
+  Read it directly to understand your runtime, and pass relevant excerpts to `call_me`.
 - `call_llm_api(input, **params) -> str`: a plain model call without your predefined instructions or host tool. It is not
   you, just a way to use intelligence as a function; it cannot choose a cell, so it is safe to call from many
   threads at once.
@@ -95,6 +91,7 @@ can use them.
 
 ## Working principles
 
+- Save generated files in the working directory using relative paths unless the user specifies another location.
 - Solve problems from first principles.
 - Persist through failures, try alternatives, and verify results.
 - Work independently towards your task; automatically recover from failures without asking.
@@ -144,10 +141,12 @@ class Mind:
         self.client, self.model, self.instructions = client, model, instructions
 
     @log_wake
-    def wake(self, input=(), *, submit: Submit, context: Callable[[], str], **body) -> Response:
+    def wake(self, input=(), *, submit: Submit, instructions: str = "", context=(), **body) -> Response:
         """Wake the mind. Exposed to cells as `call_me`.
 
         input: a string or list of input items, passed positionally or by keyword; defaults to empty.
+        instructions: caller-provided working instructions, sent as a developer message.
+        context: a string (sent as user content) or input items, placed before input. Defaults to empty.
         body: other keyword arguments of `client.responses.create`. Commonly used:
             tools: the caller's own tools; `set_next_cell` is always appended.
             tool_choice: "auto" / "required" / "none", or a specific tool.
@@ -156,7 +155,7 @@ class Mind:
             include: extra output data; "reasoning.encrypted_content" is always added.
             metadata, ...: passed through unchanged.
           Normalized or fixed by the mind:
-            model, instructions: the mind itself.
+            model and API instructions: the configured model and fixed host instructions.
             reasoning: only `effort` is kept, raised to at least "medium".
             stream, background: always off; the full Response is returned.
             store, previous_response_id: stateless; to continue a conversation, put its
@@ -165,19 +164,21 @@ class Mind:
                 with the caller's tools and the caller never has to answer it.
         submit: where `set_next_cell(code, summary)` lands. The agent binds a fresh one
             per cell, so a late call from a finished cell cannot choose the next one.
-        context: what the mind sees of its memory, sent first as a developer message.
         extra_body cannot override fields in PROTECTED.
 
         Example (agent side, before each cell runs):
             slot = Slot()
-            env.bind(call_me=partial(mind.wake, submit=slot.submit, context=lambda: "..."))
+            env.bind(call_me=partial(mind.wake, submit=slot.submit))
 
-        Example (cell side, written by the model; `submit` and `context` are already bound):
+        Example (cell side, written by the model; only `submit` is already bound):
             r = call_me(input="Tests failed:\\n" + log + "\\nFix them and submit the next cell.")
             print(r.output_text)
         """
         effort = (body.get("reasoning") or {}).get("effort")
-        items = [{"role": "developer", "content": context()}, *_input_items(input)]
+        items = []
+        if instructions:
+            items.append({"role": "developer", "content": instructions})
+        items += [*_input_items(context), *_input_items(input)]
         tools = [t for t in body.get("tools", []) if t.get("name") != SET_NEXT_CELL["name"]]
         body = {k: v for k, v in body.items() if k not in PROTECTED}
         if body.get("extra_body") is not None:
@@ -238,20 +239,12 @@ def _run_host_tool(call: ResponseFunctionToolCall, submit: Submit) -> str:
     return json.dumps(result)
 
 
-class Memory:
-    """The agent's memory across cells: task, execution history and variable descriptions.
-
-    Values live in the persistent Python session. `context` combines their
-    names and types with these records, so each wake can see what has happened
-    and continue the same task.
-    """
-
-    RECENT = 10  # Finished cells shown in full on each wake; older ones stay in `history`.
+class History:
+    """Original execution records; the agent builds its own memory from copies."""
 
     def __init__(self, task: str):
         self.task = task
         self.history = []  # One {code, summary, output, error} dict per finished cell.
-        self.var_docs = {}  # Variable name -> description, maintained by cells.
 
     @property
     def cells(self) -> int:
@@ -259,87 +252,28 @@ class Memory:
         return len(self.history)
 
     def record(self, code: str, summary: str, result: CellResult) -> None:
-        """After a cell: keep its record, with the output clipped."""
-        self.history.append({"code": code, "summary": summary, "output": _clip(result.output), "error": result.error})
-
-    def context(self, variables: dict[str, str]) -> str:
-        """The developer message for each wake: task, cell number, variables, finished cells.
-
-        Example (cell 14; `report` has no description in `var_docs`):
-            Memory (written by the agent's runtime; not the user's words, not yours):
-            - The user's task, verbatim: Summarize the Hacker News front page
-            - Current cell: 14
-            - Variables defined by earlier cells: pages: dict[30] (url -> html, fetched live), failed: list[2], fetch_all: function, report: str
-            - Older cells (summary and result; read `history[i]` in a cell for the rest):
-            cell 0: Start the task. [ok]
-            cell 1: Fetch the front page [failed: HTTPError: HTTP Error 403: Forbidden]
-            cell 2: Fetch with a browser User-Agent [ok]
-            cell 3: Fetch every linked article [ok]
-            - Recent cells (the last 10, in full):
-            ### cell 4 · Check which fetches failed
-            code:
-            ...
-
-            ### cell 12 · Summarize each page in one line
-            code:
-            summaries = [call_llm_api("One line:\n" + html) for html in pages.values()]
-            output:
-            Summarized 30 pages.
-
-            ### cell 13 · Write the report
-            code:
-            open("report.md", "w").write(render(summaries))
-            error:
-            Traceback (most recent call last):
-            ...
-            NameError: name 'render' is not defined
-        """
-        described = [self._describe(name, kind) for name, kind in variables.items()]
-        lines = [
-            "Memory (written by the agent's runtime; not the user's words, not yours):",
-            f"- The user's task, verbatim: {self.task}",
-            f"- Working directory: {Path.cwd()}. Save generated files here using relative paths unless the user specifies another location.",
-            f"- Current cell: {self.cells}",
-            "- Variables defined by earlier cells: " + (", ".join(described[:200]) or "none"),
-        ]
-        if older := self._older_cells():
-            lines += ["- Older cells (summary and result; read `history[i]` in a cell for the rest):", older]
-        return "\n".join([*lines, f"- Recent cells (the last {self.RECENT}, in full):", self._recent_cells()])
+        """After a cell: keep its record, with the full output."""
+        self.history.append({"code": code, "summary": summary, "output": result.output, "error": result.error})
 
     def snapshot(self) -> list[dict]:
         """A copy of the history for cells to read as `history`; they cannot change the real one."""
         return [record.copy() for record in self.history]
 
-    def _describe(self, name: str, kind: str) -> str:
-        description = self.var_docs.get(name)
-        return f"{name}: {kind}" + (f" ({description})" if description else "")
-
-    def _older_cells(self) -> str:
-        """One line per cell before the recent window: its summary and whether it failed."""
-        lines = []
-        for number, cell in enumerate(self.history[: max(0, self.cells - self.RECENT)]):
-            result = f"failed: {cell['error'].strip().splitlines()[-1]}" if cell["error"] else "ok"
-            lines.append(f"cell {number}: {cell['summary']} [{result}]")
-        return "\n".join(lines)
-
-    def _recent_cells(self) -> str:
-        blocks = []
-        for number, cell in enumerate(self.history[-self.RECENT :], start=max(0, self.cells - self.RECENT)):
-            parts = [f"### cell {number} · {cell['summary']}", "code:", cell["code"].strip()]
-            if cell["output"].strip():
-                parts += ["output:", cell["output"].strip()]
-            if cell["error"]:
-                parts += ["error:", cell["error"].strip()]
-            blocks.append("\n".join(parts))
-        return "\n\n".join(blocks) or "none yet"
+    def recovery_context(self, variables: dict[str, str]) -> str:
+        """A small recovery context that cannot depend on bootstrap functions."""
+        recent = [{**record, "output": _clip(record["output"])} for record in self.history[-3:]]
+        return json.dumps(
+            {"task": self.task, "cwd": str(Path.cwd()), "variables": variables, "recent_cells": recent},
+            ensure_ascii=False,
+        )
 
 
 def _clip(output: str, limit: int = 1000) -> str:
-    """Keep short output intact; retain only the head and tail of long output in history."""
+    """Limit recovery context output without changing the original history."""
     if len(output) <= limit:
         return output
     omitted = len(output) - limit
-    note = f"[… {omitted:,} chars omitted; keep data in variables, not output]"
+    note = f"[… {omitted:,} chars omitted from this view; full output remains in history]"
     return f"{output[: limit // 2]}\n{note}\n{output[-limit // 2 :]}"
 
 
@@ -367,7 +301,6 @@ class Slot:
 class Agent:
     """A mind with a session and a memory, alive while the loop runs."""
 
-    START = "Start the user's task and submit the first Python cell."
     REPAIR = "The previous cell failed (its error is in the history). Repair it and continue the task."
 
     def __init__(self, mind: Mind, *, cwd: str | Path | None = None):
@@ -398,57 +331,67 @@ class Agent:
             log = create_run_log("agent.log", key=self.mind.client.api_key) if debug else None
 
             env = env if env is not None else IPythonEnv()
-            memory = Memory(task)
+            history = History(task)
             source_code = {
                 name: (Path(__file__).parent.parent / name).read_text(encoding="utf-8")
-                for name in ("core/agent.py", "core/env.py")
+                for name in ("core/agent.py", "core/env.py", "core/bootstrap.py")
             }
 
             def quit_() -> None:
                 raise Quit
 
-            code, summary = _bootstrap_cell(f"{self.START}\n\nUser task:\n{task}"), "Start the task."
-            failures = 0
+            env.bind(task=task, variables=env.variables)
+            code, summary = source_code["core/bootstrap.py"], "Initialize the agent and start the task."
+            failures, recovering = 0, False
             while True:
                 slot = Slot()
-                # Restore runtime bindings each cell; mutations to shared objects still persist.
+                # Refresh host interfaces; leave bootstrap definitions untouched.
                 env.bind(
                     call_me=partial(
                         self.mind.wake,
-                        log=partial(log, "call_me", memory.cells) if log is not None else None,
+                        log=partial(log, "call_me", history.cells) if log is not None else None,
                         submit=slot.submit,
-                        context=lambda: memory.context(env.variables()),
                     ),
                     call_llm_api=self.mind.query,
                     quit=quit_,
-                    history=memory.snapshot(),
-                    var_docs=memory.var_docs,
+                    history=history.snapshot(),
                     source_code=source_code.copy(),
                 )
+                if recovering:
+                    env.bind(
+                        _recover=partial(
+                            self.mind.wake,
+                            input=self.REPAIR,
+                            context=history.recovery_context(env.variables()),
+                            log=partial(log, "recover", history.cells) if log is not None else None,
+                            submit=slot.submit,
+                        )
+                    )
                 if on_cell is not None:
-                    on_cell(memory.cells, summary, code)
+                    on_cell(history.cells, summary, code)
                 result = env.execute(
-                    code, log=partial(log, "cell", memory.cells) if log is not None else None, summary=summary
+                    code, log=partial(log, "cell", history.cells) if log is not None else None, summary=summary
                 )
                 slot.close()
                 if not result.quit and result.error is None and slot.code is None:
                     result.error = "The cell finished without choosing a next cell via set_next_cell."
                 if on_result is not None:
-                    on_result(memory.cells, result)
+                    on_result(history.cells, result)
+                history.record(code, summary, result)
                 if result.quit:
                     return
-                memory.record(code, summary, result)
 
                 if result.error is None:
-                    failures, code, summary = 0, slot.code, slot.summary
+                    if not recovering:
+                        failures = 0  # A successful recovery request alone is not a successful repair.
+                    code, summary, recovering = slot.code, slot.summary, False
                     continue
                 failures += 1
                 if failures >= max_failures:
                     raise RuntimeError(f"{failures} consecutive cells failed; last error:\n{result.error}")
                 # Side effects of the failed cell are not rolled back; the mind repairs from here.
-                code, summary = _bootstrap_cell(self.REPAIR), "Repair the failed cell."
-
-
-def _bootstrap_cell(message: str) -> str:
-    """A cell that only wakes the mind with `message`; the mind chooses the next cell."""
-    return f"response = call_me(input={message!r})\nprint(response.output_text)"
+                code, summary, recovering = (
+                    "response = _recover()\nprint(response.output_text)",
+                    "Repair the failed cell.",
+                    True,
+                )

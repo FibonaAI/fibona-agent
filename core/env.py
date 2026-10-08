@@ -61,7 +61,7 @@ class IPythonEnv:
     ):
         self.stdout, self.stderr = stdout, stderr
         self.read_input = read_input if read_input is not None else _unavailable_input
-        # Memory keeps its own cell history, so skip IPython's (and its sqlite file in ~/.ipython).
+        # The host keeps cell history, so skip IPython's (and its sqlite file in ~/.ipython).
         config = Config()
         config.HistoryAccessor.enabled = False
         self.shell = InteractiveShell(config=config)
