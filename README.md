@@ -86,3 +86,17 @@ To check all tracked files manually:
 ```bash
 uv run pre-commit run --all-files
 ```
+
+## Citation
+
+If you use Fibona Agent in your research, please cite it as follows:
+
+```bibtex
+@misc{fibonaagent2026,
+  author       = {{FibonaAI Team}},
+  title        = {{Fibona Agent: Self-Improving Agent Writing Itself From Scratch}},
+  year         = {2026},
+  howpublished = {GitHub repository},
+  url          = {https://github.com/FibonaAI/fibona-agent}
+}
+```
