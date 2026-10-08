@@ -73,6 +73,12 @@ The working directory specified by `cwd` must already exist.
 
 ## Development
 
+Run the offline regression tests (real IPython, scripted model responses, no API key needed):
+
+```bash
+uv run python -m unittest discover -s tests -v
+```
+
 Enable Ruff checks before each commit:
 
 ```bash
