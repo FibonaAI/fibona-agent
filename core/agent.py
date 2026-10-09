@@ -247,6 +247,7 @@ class Memory:
     """
 
     RECENT = 10  # Finished cells shown in full on each wake; older ones stay in `history`.
+    ERROR_LIMIT = 8000  # Error characters shown per recent cell; `history` keeps the whole error.
 
     def __init__(self, task: str):
         self.task = task
@@ -318,7 +319,7 @@ class Memory:
         """One line per cell before the recent window: its summary and whether it failed."""
         lines = []
         for number, cell in enumerate(self.history[: max(0, self.cells - self.RECENT)]):
-            result = f"failed: {cell['error'].strip().splitlines()[-1]}" if cell["error"] else "ok"
+            result = f"failed: {_clip_line(cell['error'].strip().splitlines()[-1])}" if cell["error"] else "ok"
             lines.append(f"cell {number}: {cell['summary']} [{result}]")
         return "\n".join(lines)
 
@@ -329,18 +330,24 @@ class Memory:
             if cell["output"].strip():
                 parts += ["output:", cell["output"].strip()]
             if cell["error"]:
-                parts += ["error:", cell["error"].strip()]
+                hint = f"the full error is in history[{number}]['error']"
+                parts += ["error:", _clip(cell["error"].strip(), self.ERROR_LIMIT, hint)]
             blocks.append("\n".join(parts))
         return "\n\n".join(blocks) or "none yet"
 
 
-def _clip(output: str, limit: int = 1000) -> str:
+def _clip(output: str, limit: int = 1000, hint: str = "keep data in variables, not output") -> str:
     """Keep short output intact; retain only the head and tail of long output in history."""
     if len(output) <= limit:
         return output
     omitted = len(output) - limit
-    note = f"[… {omitted:,} chars omitted; keep data in variables, not output]"
+    note = f"[… {omitted:,} chars omitted; {hint}]"
     return f"{output[: limit // 2]}\n{note}\n{output[-limit // 2 :]}"
+
+
+def _clip_line(line: str, limit: int = 200) -> str:
+    """Keep a short line intact; keep only the start of a long one."""
+    return line if len(line) <= limit else f"{line[:limit]}[… {len(line) - limit:,} chars omitted]"
 
 
 class Slot:
