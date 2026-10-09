@@ -1,6 +1,5 @@
 import io
 import traceback
-import types
 from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
@@ -70,12 +69,10 @@ class IPythonEnv:
         # Tracebacks go to CellResult.error instead of being printed into the output.
         self.shell._showtraceback = lambda *args, **kwargs: None
         self.shell.set_custom_exc((Quit,), lambda *args, **kwargs: [])
-        self.bound = set()  # Names the agent put in, as opposed to what cells defined.
 
     def bind(self, **names) -> None:
         """Put names (call_me, quit, ...) into the cells' global namespace, replacing old ones."""
         self.shell.user_ns.update(names)
-        self.bound.update(names)
 
     @log_cell
     def execute(self, code: str) -> CellResult:
@@ -92,22 +89,6 @@ class IPythonEnv:
         if isinstance(error, Quit):
             return CellResult(buffer.getvalue(), quit=True)
         return CellResult(buffer.getvalue(), "".join(traceback.format_exception(error)) if error else None)
-
-    def variables(self) -> dict[str, str]:
-        """What cells have defined: name -> type, with the length of containers."""
-        found = {}
-        for name, value in self.shell.user_ns.items():
-            if name.startswith("_") or name in self.shell.user_ns_hidden or name in self.bound:
-                continue
-            if isinstance(value, types.ModuleType):
-                continue
-            kind = type(value).__name__
-            try:
-                kind += f"[{len(value)}]"
-            except Exception:
-                pass
-            found[name] = kind
-        return found
 
 
 def _unavailable_input(prompt: str = "") -> str:

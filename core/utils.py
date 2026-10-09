@@ -31,17 +31,16 @@ def log_wake(wake):
     """Record one wake's initial arguments and final result when a logger is bound."""
 
     @wraps(wake)
-    def wrapped(self, input=(), *, submit, context, log=None, **body):
+    def wrapped(self, input=(), *, submit, log=None, **body):
         if log is None:
-            return wake(self, input=input, submit=submit, context=context, **body)
+            return wake(self, input=input, submit=submit, **body)
         started_at, wake_id = datetime.now(UTC).isoformat(), uuid4().hex
         request = {k: v for k, v in body.items() if k != "extra_headers"}
         request["input"] = input
         response, error = None, None
         try:
-            context_text = context()
-            request.update(context=context_text, model=self.model, instructions=self.instructions)
-            response = wake(self, input=input, submit=submit, context=lambda: context_text, **body)
+            request.update(model=self.model, instructions=self.instructions)
+            response = wake(self, input=input, submit=submit, **body)
             return response
         except BaseException as exc:
             error = {"type": type(exc).__name__, "message": str(exc)}
