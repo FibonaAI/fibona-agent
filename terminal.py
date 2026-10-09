@@ -205,7 +205,7 @@ class Terminal(App):
             self._reset_output()
             error_widget = Static("", classes="error")
             card = Collapsible(
-                Static(Syntax(code, "python", word_wrap=True)), error_widget, title=f"● cell {number} · {summary}"
+                Static(Syntax(code, "python", word_wrap=True)), error_widget, title=Text(f"● cell {number} · {summary}")
             )
             self.cells[number] = (card, summary, error_widget)
             await self._append(card)
@@ -236,7 +236,7 @@ class Terminal(App):
             self.notebook.finish_cell(error)
             self._save_notebook()
             card, summary, error_widget = self.cells[number]
-            card.title = f"{'✗' if error else '✓'} cell {number} · {summary}"
+            card.title = Text(f"{'✗' if error else '✓'} cell {number} · {summary}")
             if error:
                 error_widget.update(Text(error))
         elif kind == "error":
