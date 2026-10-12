@@ -32,8 +32,13 @@ class Notebook:
         else:
             outputs.append({"output_type": "stream", "name": channel, "text": text})
 
-    def finish_cell(self, error: str | None) -> None:
+    def finish_cell(self, error: str | None, *, output: str | None = None) -> None:
+        """Complete the record using captured cell output, retaining matching live stream channels."""
         cell = self.cells[-1]
+        if output is not None:
+            recorded = "".join(item["text"] for item in cell["outputs"] if item["output_type"] == "stream")
+            if recorded != output:
+                cell["outputs"] = [{"output_type": "stream", "name": "stdout", "text": output}] if output else []
         cell["execution_count"] = len(self.cells)
         if error:
             lines = error.rstrip().splitlines()

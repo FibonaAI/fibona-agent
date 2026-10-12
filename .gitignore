@@ -16,3 +16,6 @@ wheels/
 # Secrets
 .env
 agent.log
+
+# Local test artifacts
+/tmp/
