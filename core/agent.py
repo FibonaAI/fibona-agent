@@ -229,10 +229,9 @@ def _run_host_tool(call: ResponseFunctionToolCall, submit: Submit) -> str:
 
 
 class Memory:
-    """The host's original task and execution records; cells receive copies."""
+    """The host's execution records; cells receive copies."""
 
-    def __init__(self, task: str):
-        self.task = task
+    def __init__(self):
         self.history = []  # One {code, summary, output, error} dict per finished cell.
 
     @property
@@ -273,20 +272,15 @@ class Slot:
 class Agent:
     """A mind with a session and a memory, alive while the loop runs."""
 
-    START = "Start the user's task and submit the first Python cell."
-    REPAIR = "The previous cell failed (its error is in the history). Repair it and continue the task."
+    REPAIR = "The previous cell failed (its error is in the history). Repair it and continue the program."
 
     def __init__(self, mind: Mind, *, cwd: str | Path | None = None):
         self.mind = mind
         self.cwd = Path(cwd).expanduser().resolve() if cwd is not None else None
 
-    def bootstrap(self, task: str) -> str:
-        """The first cell: wake the mind with the task and choose the next cell."""
-        return _wake_cell(f"{self.START}\n\nUser task:\n{task}")
-
     def run(
         self,
-        task: str,
+        first_cell: str,
         *,
         env: IPythonEnv | None = None,
         on_cell: Callable[[int, str, str], None] | None = None,
@@ -294,26 +288,27 @@ class Agent:
         max_failures: int = 3,
         debug: bool = False,
     ) -> None:
-        """One life: fresh memory and a supplied or new session, running cells until one quits
-        (a trampoline: each cell only chooses the next one, and this loop runs them all).
+        """Execute first_cell verbatim, then run the cells selected by its program.
 
+        Startup policy, user tasks and UI composition belong in the supplied Python code.
         Pass an environment for input/output and an on_cell callback to observe execution.
         Without them, the agent runs with captured output and no user input.
         on_result receives each cell's final validated result, including the cell that quits.
         The configured cwd must exist; the caller's working directory is restored afterward.
         With debug=True, cells and call_me calls are logged to agent.log in that directory.
         Raises RuntimeError after max_failures consecutive failed cells; interruptions propagate.
+        Cells execute synchronously in the calling thread.
         """
         with chdir(self.cwd or Path.cwd()):
             log = create_run_log("agent.log", key=self.mind.client.api_key) if debug else None
 
             env = env if env is not None else IPythonEnv()
-            memory = Memory(task)
+            memory = Memory()
 
             def quit_() -> None:
                 raise Quit
 
-            code, summary = self.bootstrap(task), "Start the task."
+            code, summary = first_cell, "Run the first cell."
             failures, recovering = 0, False
             while True:
                 slot = Slot()
@@ -354,7 +349,7 @@ class Agent:
                 message = (
                     self.REPAIR
                     + "\n\n"
-                    + json.dumps({"task": memory.task, "code": code, "error": result.error}, ensure_ascii=False)
+                    + json.dumps({"first_cell": first_cell, "code": code, "error": result.error}, ensure_ascii=False)
                 )
                 code, summary, recovering = _wake_cell(message), "Repair the failed cell.", True
 
