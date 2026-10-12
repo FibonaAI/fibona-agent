@@ -41,7 +41,7 @@ from boot.terminal.notebook import Notebook
 from core.env import CellResult, Quit
 
 TERMINAL_INSTRUCTIONS = """
-`terminal` is a live Python UI object created by the first cell. Core runs in the caller's thread; the UI runs in its own thread.
+`terminal` is a live Python UI object created by the bootstrap cell. Core runs in the caller's thread; the UI runs in its own thread.
 Use terminal.call_from_thread(callback, *args) to change live widgets or app.layout on the UI thread; it returns a Future.
 The UI implementation is in source_code['boot/terminal/terminal.py']. You can redefine it in a cell, not just edit its file.
 To replace the UI, call terminal.close(), define your replacement, then start it with get_ipython().

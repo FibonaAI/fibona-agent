@@ -280,7 +280,7 @@ class Agent:
 
     def run(
         self,
-        first_cell: str,
+        bootstrap_cell: str,
         *,
         env: IPythonEnv | None = None,
         on_cell: Callable[[int, str, str], None] | None = None,
@@ -288,7 +288,7 @@ class Agent:
         max_failures: int = 3,
         debug: bool = False,
     ) -> None:
-        """Execute first_cell verbatim, then run the cells selected by its program.
+        """Execute bootstrap_cell verbatim, then run the cells selected by its program.
 
         Startup policy, user tasks and UI composition belong in the supplied Python code.
         Pass an environment for input/output and an on_cell callback to observe execution.
@@ -308,7 +308,7 @@ class Agent:
             def quit_() -> None:
                 raise Quit
 
-            code, summary = first_cell, "Run the first cell."
+            code, summary = bootstrap_cell, "Run the bootstrap cell."
             failures, recovering = 0, False
             while True:
                 slot = Slot()
@@ -349,7 +349,9 @@ class Agent:
                 message = (
                     self.REPAIR
                     + "\n\n"
-                    + json.dumps({"first_cell": first_cell, "code": code, "error": result.error}, ensure_ascii=False)
+                    + json.dumps(
+                        {"bootstrap_cell": bootstrap_cell, "code": code, "error": result.error}, ensure_ascii=False
+                    )
                 )
                 code, summary, recovering = _wake_cell(message), "Repair the failed cell.", True
 

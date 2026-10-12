@@ -20,26 +20,28 @@ Requires Python 3.12+ and `uv`.
 
    Set `FIBONA_MODEL` to a model supported by your provider. If omitted, it defaults to `gpt-6-astra`.
 
-2. Write your startup code in `your_first_cell.py`, then run it from the project root:
+2. Write your bootstrap cell in `your_bootstrap.py`, then run it from the project root:
 
    ```bash
-   uv run --env-file .env fibona.py your_first_cell.py
+   uv run --env-file .env fibona.py --bootstrap-file your_bootstrap.py
    ```
 
 The simplest included bootstrap reads a task from the console:
 
 ```bash
-uv run --env-file .env fibona.py boot/minimal/init.py
+uv run --env-file .env fibona.py --bootstrap-mode minimal
 ```
 
 To start with a terminal UI:
 
 ```bash
-uv run --env-file .env fibona.py boot/terminal/init.py
+uv run --env-file .env fibona.py --bootstrap-mode terminal
 ```
 
 Enter your task in the terminal input box. Press **Enter** to send.
 See the [terminal bootstrap README](boot/terminal/README.md) for its design and controls.
+
+Use `--bootstrap-mode` to choose an included bootstrap, or `--bootstrap-file` to supply your own bootstrap cell.
 
 ## Use the core as a library
 
@@ -49,7 +51,7 @@ From another `uv` project, add a local checkout:
 uv add /path/to/fibona-agent
 ```
 
-Core executes the Python source supplied to `Agent.run` as the first cell in a persistent session.
+Core executes the Python source supplied to `Agent.run` as the bootstrap cell in a persistent session.
 Cells share variables and call `call_me` when they need the model to choose the next cell.
 Configure the client, model, working directory and input/output in your application:
 
@@ -60,7 +62,7 @@ from openai import OpenAI
 from core.agent import Agent, Mind, INSTRUCTIONS
 from core.env import IPythonEnv
 
-first_cell = """
+bootstrap_cell = """
 task = input("Your task: ")
 call_me(input=task)
 """
@@ -68,7 +70,7 @@ call_me(input=task)
 with OpenAI() as client:
     mind = Mind(client=client, model="gpt-6-astra", instructions=INSTRUCTIONS)
     env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
-    Agent(mind, cwd=".").run(first_cell, env=env)
+    Agent(mind, cwd=".").run(bootstrap_cell, env=env)
 ```
 
 ## Development

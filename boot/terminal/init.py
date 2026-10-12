@@ -1,4 +1,4 @@
-"""Cell 0: start the UI and arrange cell 1 to read the user's task."""
+"""Bootstrap cell: start the UI and arrange cell 1 to read the user's task."""
 
 from boot.terminal.terminal import Terminal
 
