@@ -1,11 +1,11 @@
 """Bootstrap cell: start the UI and arrange cell 1 to read the user's task."""
 
-from boot.terminal.terminal import Terminal
+from bootstraps.terminal.terminal import Terminal
 
 terminal = Terminal(get_ipython()).start()  # noqa: F821 -- provided by IPython.
 
 USER_CELL = """
-from boot.terminal.context import initialize_context
+from bootstraps.terminal.context import initialize_context
 
 task = input()
 build_context = initialize_context(globals())

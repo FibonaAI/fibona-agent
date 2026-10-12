@@ -12,8 +12,8 @@ from core.env import IPythonEnv
 
 
 def main() -> int:
-    boot_dir = Path(__file__).resolve().parent / "boot"
-    bootstraps = {path.parent.name: path for path in sorted(boot_dir.glob("*/init.py")) if path.is_file()}
+    bootstrap_dir = Path(__file__).resolve().parent / "bootstraps"
+    bootstraps = {path.parent.name: path for path in sorted(bootstrap_dir.glob("*/init.py")) if path.is_file()}
     parser = argparse.ArgumentParser(description="Run a built-in bootstrap or a Python file as the bootstrap cell.")
     bootstrap = parser.add_mutually_exclusive_group(required=True)
     bootstrap.add_argument("--bootstrap-mode", choices=list(bootstraps), help="Select an included bootstrap.")

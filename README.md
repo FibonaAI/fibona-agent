@@ -39,7 +39,7 @@ uv run --env-file .env fibona.py --bootstrap-mode terminal
 ```
 
 Enter your task in the terminal input box. Press **Enter** to send.
-See the [terminal bootstrap README](boot/terminal/README.md) for its design and controls.
+See the [terminal bootstrap README](bootstraps/terminal/README.md) for its design and controls.
 
 Use `--bootstrap-mode` to choose an included bootstrap, or `--bootstrap-file` to supply your own bootstrap cell.
 

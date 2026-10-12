@@ -37,13 +37,13 @@ from prompt_toolkit.widgets import TextArea
 from pygments.lexers import PythonLexer
 from pygments.styles.monokai import MonokaiStyle
 
-from boot.terminal.notebook import Notebook
+from bootstraps.terminal.notebook import Notebook
 from core.env import CellResult, Quit
 
 TERMINAL_INSTRUCTIONS = """
 `terminal` is a live Python UI object created by the bootstrap cell. Core runs in the caller's thread; the UI runs in its own thread.
 Use terminal.call_from_thread(callback, *args) to change live widgets or app.layout on the UI thread; it returns a Future.
-The UI implementation is in source_code['boot/terminal/terminal.py']. You can redefine it in a cell, not just edit its file.
+The UI implementation is in source_code['bootstraps/terminal/terminal.py']. You can redefine it in a cell, not just edit its file.
 To replace the UI, call terminal.close(), define your replacement, then start it with get_ipython().
 The terminal bootstrap uses IPython pre_run_cell/post_run_cell events and standard Python streams for its I/O and cell records.
 input() receives text from the composer and print() writes to its message area. Closing a UI does not end the agent.
@@ -571,7 +571,7 @@ class Terminal:
         instructions = namespace.get("instructions", "")
         if TERMINAL_INSTRUCTIONS not in instructions:
             namespace["instructions"] = "\n\n".join(part for part in (instructions, TERMINAL_INSTRUCTIONS) if part)
-        namespace.setdefault("source_code", {})["boot/terminal/terminal.py"] = Path(__file__).read_text()
+        namespace.setdefault("source_code", {})["bootstraps/terminal/terminal.py"] = Path(__file__).read_text()
         namespace.setdefault("var_docs", {})["terminal"] = (
             "Cell-owned UI; close and replace it without restarting core."
         )
