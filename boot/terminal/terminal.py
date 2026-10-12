@@ -37,15 +37,15 @@ from prompt_toolkit.widgets import TextArea
 from pygments.lexers import PythonLexer
 from pygments.styles.monokai import MonokaiStyle
 
+from boot.terminal.notebook import Notebook
 from core.env import CellResult, Quit
-from demos.agent_in_repl.notebook import Notebook
 
 TERMINAL_INSTRUCTIONS = """
 `terminal` is a live Python UI object created by the first cell. Core runs in the caller's thread; the UI runs in its own thread.
 Use terminal.call_from_thread(callback, *args) to change live widgets or app.layout on the UI thread; it returns a Future.
-The UI implementation is in source_code['demos/agent_in_repl/terminal.py']. You can redefine it in a cell, not just edit its file.
+The UI implementation is in source_code['boot/terminal/terminal.py']. You can redefine it in a cell, not just edit its file.
 To replace the UI, call terminal.close(), define your replacement, then start it with get_ipython().
-The demo uses IPython pre_run_cell/post_run_cell events and standard Python streams for its I/O and cell records.
+The terminal bootstrap uses IPython pre_run_cell/post_run_cell events and standard Python streams for its I/O and cell records.
 input() receives text from the composer and print() writes to its message area. Closing a UI does not end the agent.
 Use print() in the chosen cell for user-facing dialogue, including questions before input().
 Do not print call_me response text: it is returned to the calling cell, and the chosen cell delivers the reply.
@@ -119,7 +119,7 @@ class Terminal:
         self.completed_cell = None
         previous = shell.user_ns.get("terminal")
         current = getattr(previous, "current_cell", None)
-        self.next_summary = current[1] if current else "Run the first cell."
+        self.next_summary = current[1] if current else "Initialize the terminal."
         self.current_cell = None
         self.cell_buffer = None
         self.attached = False
@@ -571,7 +571,7 @@ class Terminal:
         instructions = namespace.get("instructions", "")
         if TERMINAL_INSTRUCTIONS not in instructions:
             namespace["instructions"] = "\n\n".join(part for part in (instructions, TERMINAL_INSTRUCTIONS) if part)
-        namespace.setdefault("source_code", {})["demos/agent_in_repl/terminal.py"] = Path(__file__).read_text()
+        namespace.setdefault("source_code", {})["boot/terminal/terminal.py"] = Path(__file__).read_text()
         namespace.setdefault("var_docs", {})["terminal"] = (
             "Cell-owned UI; close and replace it without restarting core."
         )
@@ -601,14 +601,14 @@ class Terminal:
             self.ready.set()
             self.inputs.put(None)
             if self.user_quit:
-                # The demo owns terminal keyboard exit, including cells blocked in native I/O or executors.
+                # The terminal bootstrap owns terminal keyboard exit, including cells blocked in native I/O or executors.
                 # Application.run has restored the TTY before this point; core and the launcher stay synchronous.
                 sys.__stdout__.flush()
                 sys.__stderr__.flush()
                 os._exit(130)
 
     def close(self):
-        """Detach this demo's IPython hooks and I/O, leaving the session's variables intact."""
+        """Detach this bootstrap's IPython hooks and I/O, leaving the session's variables intact."""
         if self.completed_cell is not None:
             _, result, slot = self.completed_cell
             if slot is not None and slot.closed:
@@ -713,7 +713,7 @@ class Terminal:
                 self.call_from_thread(self._finish_cell, number, result)
 
     def _end_cell(self, execution):
-        """Record IPython's result and close this demo on quit or interruption."""
+        """Record IPython's result and close this bootstrap on quit or interruption."""
         if not self.attached:
             # IPython restores its saved hook after code returns; finish a close requested inside that code.
             if sys.excepthook == self._uncaught_error:

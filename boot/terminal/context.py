@@ -1,4 +1,4 @@
-"""Editable working instructions and context helpers for the REPL demo."""
+"""Editable working instructions and context helpers for the terminal bootstrap."""
 
 import inspect
 import types
@@ -10,7 +10,7 @@ from core import env as core_env
 
 CONTEXT_INSTRUCTIONS = """
 Your working instructions, variables() and build_context() are Python state in this session.
-Their original implementation is in source_code['demos/agent_in_repl/context.py']; you can replace them in later cells.
+Their original implementation is in source_code['boot/terminal/context.py']; you can replace them in later cells.
 source_code also contains the core runtime source. Read relevant excerpts and include them in input when needed.
 Use call_me(input=[*build_context(), {"role": "user", "content": observations}]) to send these instructions and your selected context.
 Keep useful data and task-specific helpers in session variables; update var_docs to describe them.
@@ -32,7 +32,7 @@ def initialize_context(namespace):
             **namespace.get("source_code", {}),
             "core/agent.py": inspect.getsource(core_agent),
             "core/env.py": inspect.getsource(core_env),
-            "demos/agent_in_repl/context.py": Path(__file__).read_text(encoding="utf-8"),
+            "boot/terminal/context.py": Path(__file__).read_text(encoding="utf-8"),
         },
         instructions="\n\n".join(part for part in (namespace.get("instructions", ""), CONTEXT_INSTRUCTIONS) if part),
         RECENT=namespace.get("RECENT", 10),

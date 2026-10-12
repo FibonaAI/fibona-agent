@@ -1,6 +1,6 @@
-# Agent in REPL
+# Terminal bootstrap
 
-This demo puts an agent's working instructions, memory organization, task helpers and terminal UI in a persistent Python REPL. The agent can inspect and change them as it works.
+This bootstrap puts an agent's working instructions, memory organization, task helpers and terminal UI in a persistent Python REPL. The agent can inspect and change them as it works.
 
 It is one agent implementation built on Fibona's minimal core.
 
@@ -8,7 +8,7 @@ It is one agent implementation built on Fibona's minimal core.
 
 The agent writes the program that drives its work. Cells perform operations, keep state and decide when to call the model for the next cell. The host executes and records cells; the generated program organizes the task.
 
-This demo extends that idea to working instructions, memory organization and the UI. They are part of the running program, so the agent can revise how it selects context, tracks a task and interacts with the user. It can replace the entire UI or change frameworks during a session.
+This bootstrap extends that idea to working instructions, memory organization and the UI. They are part of the running program, so the agent can revise how it selects context, tracks a task and interacts with the user. It can replace the entire UI or change frameworks during a session.
 
 The initial program brings up the environment and waits for user input before calling the model. Core executes cells, preserves the original history and handles recovery; the program owns its working strategy and interface.
 
@@ -19,7 +19,7 @@ Changes take effect when new definitions are executed in the session. Editing so
 Requires Python 3.12+ and `uv`. Configure `.env` using the [project README](../../README.md), then run from the project root:
 
 ```bash
-uv run --env-file .env fibona.py demos/agent_in_repl/bootstrap.py
+uv run --env-file .env fibona.py boot/terminal/init.py
 ```
 
 The welcome screen waits for a task before any model call. Press **Enter** to send and **Alt+Enter** for a newline. Later `input()` calls use the same input box. User-facing dialogue is printed by the chosen cells.

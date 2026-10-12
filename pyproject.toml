@@ -22,7 +22,7 @@ build-backend = "setuptools.build_meta"
 py-modules = ["fibona"]
 
 [tool.setuptools.packages.find]
-include = ["core", "demos.agent_in_repl"]
+include = ["core", "boot", "boot.*"]
 
 [dependency-groups]
 dev = [

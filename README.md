@@ -26,14 +26,20 @@ Requires Python 3.12+ and `uv`.
    uv run --env-file .env fibona.py your_first_cell.py
    ```
 
-To try the REPL demo:
+The simplest included bootstrap reads a task from the console:
 
 ```bash
-uv run --env-file .env fibona.py demos/agent_in_repl/bootstrap.py
+uv run --env-file .env fibona.py boot/minimal/init.py
+```
+
+To start with a terminal UI:
+
+```bash
+uv run --env-file .env fibona.py boot/terminal/init.py
 ```
 
 Enter your task in the terminal input box. Press **Enter** to send.
-See the [demo README](demos/agent_in_repl/README.md) for its design and controls.
+See the [terminal bootstrap README](boot/terminal/README.md) for its design and controls.
 
 ## Use the core as a library
 
