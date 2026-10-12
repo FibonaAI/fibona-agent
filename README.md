@@ -1,4 +1,8 @@
-# Fibona Agent
+![Fibona Agent](assets/fibona-header.png)
+
+[![Blog](https://img.shields.io/badge/BLOG-5287D4?style=for-the-badge&logo=rss&logoColor=white)](https://fibona.ai/blog/fibona-agent)
+[![X](https://img.shields.io/badge/X-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/fibonaai)
+[![Website](https://img.shields.io/badge/WEBSITE-AA4E35?style=for-the-badge)](https://fibona.ai/)
 
 Fibona Agent is **a minimal, general-purpose, self-improving agent** that writes its own code as it runs.
 
