@@ -102,3 +102,7 @@ If you use Fibona Agent in your research, please cite it as follows:
   url          = {https://github.com/FibonaAI/fibona-agent}
 }
 ```
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
