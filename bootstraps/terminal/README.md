@@ -19,7 +19,7 @@ Changes take effect when new definitions are executed in the session. Editing so
 Requires Python 3.12+ and `uv`. Configure `.env` using the [project README](../../README.md), then run from the project root:
 
 ```bash
-uv run --env-file .env fibona.py --bootstrap-mode terminal
+uv run --env-file .env fibona.py --boot-mode terminal
 ```
 
 The welcome screen waits for a task before any model call. Press **Enter** to send and **Alt+Enter** for a newline. Later `input()` calls use the same input box. User-facing dialogue is printed by the chosen cells.

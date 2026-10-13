@@ -26,28 +26,28 @@ Requires Python 3.12+ and `uv`.
 
    Set `FIBONA_MODEL` to a model supported by your provider. If omitted, it defaults to `gpt-6-astra`.
 
-2. Write your bootstrap cell in `your_bootstrap.py`, then run it from the project root:
+2. Write your bootstrap cell in `./your_custom_bootstrap.py`, then run it from the project root:
 
    ```bash
-   uv run --env-file .env fibona.py --bootstrap-file your_bootstrap.py
+   uv run --env-file .env fibona.py --boot-mode ./your_custom_bootstrap.py
    ```
 
 The simplest included bootstrap reads a task from the console:
 
 ```bash
-uv run --env-file .env fibona.py --bootstrap-mode minimal
+uv run --env-file .env fibona.py --boot-mode minimal
 ```
 
 To start with a terminal UI:
 
 ```bash
-uv run --env-file .env fibona.py --bootstrap-mode terminal
+uv run --env-file .env fibona.py --boot-mode terminal
 ```
 
 Enter your task in the terminal input box. Press **Enter** to send.
 See the [terminal bootstrap README](bootstraps/terminal/README.md) for its design and controls.
 
-Use `--bootstrap-mode` to choose an included bootstrap, or `--bootstrap-file` to supply your own bootstrap cell.
+Use `--boot-mode minimal` or `--boot-mode terminal` to choose an included bootstrap. Any other value is treated as a Python file path (relative to the current directory, absolute, or starting with `~`).
 
 ## Use the core as a library
 

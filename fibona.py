@@ -13,15 +13,16 @@ from core.env import IPythonEnv
 
 def main() -> int:
     bootstrap_dir = Path(__file__).resolve().parent / "bootstraps"
-    bootstraps = {path.parent.name: path for path in sorted(bootstrap_dir.glob("*/init.py")) if path.is_file()}
     parser = argparse.ArgumentParser(description="Run a built-in bootstrap or a Python file as the bootstrap cell.")
-    bootstrap = parser.add_mutually_exclusive_group(required=True)
-    bootstrap.add_argument("--bootstrap-mode", choices=list(bootstraps), help="Select an included bootstrap.")
-    bootstrap.add_argument("--bootstrap-file", type=Path, help="Python file to execute as the bootstrap cell.")
+    parser.add_argument(
+        "--boot-mode", required=True, help="minimal, terminal, or a Python file to execute as the bootstrap cell."
+    )
     parser.add_argument("--debug", action="store_true", help="Record cells and model calls in agent.log.")
     args = parser.parse_args()
     bootstrap_file = (
-        args.bootstrap_file.expanduser() if args.bootstrap_file is not None else bootstraps[args.bootstrap_mode]
+        bootstrap_dir / args.boot_mode / "init.py"
+        if args.boot_mode in {"minimal", "terminal"}
+        else Path(args.boot_mode).expanduser()
     )
     try:
         bootstrap_cell = bootstrap_file.read_text(encoding="utf-8")
