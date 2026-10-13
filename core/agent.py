@@ -272,7 +272,14 @@ class Slot:
 class Agent:
     """A mind with a session and a memory, alive while the loop runs."""
 
-    REPAIR = "The previous cell failed (its error is in the history). Repair it and continue the program."
+    REPAIR = """
+The previous cell failed (its error is in history).
+First submit a cell that inspects surviving session variables via globals() and history to recover the current
+task, constraints, completed work and pending steps. Send the relevant state and execution records to yourself
+with call_me before choosing a repair; do not assume any bootstrap-specific helpers exist.
+Use output and errors to distinguish actual results from intended work. Failed-cell side effects are not rolled back.
+Then repair the failure and continue the program towards the recovered task.
+""".strip()
 
     def __init__(self, mind: Mind, *, cwd: str | Path | None = None):
         self.mind = mind
@@ -350,12 +357,8 @@ class Agent:
 
 
 def _wake_cell(message: str) -> str:
-    """Wake the mind with working context when available, falling back if it is broken."""
+    """Wake the mind with `message`; it chooses how to recover context and the next cell."""
     return f"""\
-try:
-    _repair_context = build_context() if callable(globals().get("build_context")) else []
-except Exception as _context_error:
-    _repair_context = [{{"role": "user", "content": f"build_context() failed: {{_context_error}}"}}]
-response = call_me(input=[*_repair_context, {{"role": "user", "content": {message!r}}}])
+response = call_me(input={message!r})
 print(response.output_text)
 """
