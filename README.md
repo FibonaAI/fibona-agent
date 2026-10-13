@@ -26,32 +26,35 @@ Requires Python 3.12+ and `uv`.
 
    Set `FIBONA_MODEL` to a model supported by your provider. If omitted, it defaults to `gpt-6-astra`.
 
-2. Start the terminal UI from the project root:
+2. Choose a startup mode and run it from the project root:
 
-   ```bash
-   uv run --env-file .env fibona.py --boot-mode terminal
-   ```
-   See the [terminal bootstrap README](bootstraps/terminal/README.md) for its design and controls.
+   - Start the terminal UI from the project root:
 
-Or start in the minimal mode and let the agent build its own chat TUI:
+     ```bash
+     uv run --env-file .env fibona.py --boot-mode terminal
+     ```
 
-```bash
-uv run --env-file .env fibona.py --boot-mode minimal \
-  "Build and launch a premium chat TUI in this terminal:
-refined dark colors, generous spacing, elegant Markdown and code rendering,
-clear activity status, and multiline input. Press Enter to send messages.
-Let me chat with you through it. Keep me updated as you build it."
-```
+     See the [terminal bootstrap README](bootstraps/terminal/README.md) for its design and controls.
 
-Omit the task to enter it interactively.
+   - Or start in the minimal mode and let the agent build its own chat TUI:
 
-To define your own startup behavior, write your bootstrap cell in `./your_custom_bootstrap.py`, then run:
+     ```bash
+     uv run --env-file .env fibona.py --boot-mode minimal \
+       "Build and launch a premium chat TUI in this terminal:
+     refined dark colors, generous spacing, elegant Markdown and code rendering,
+     clear activity status, and multiline input. Press Enter to send messages.
+     Let me chat with you through it. Keep me updated as you build it."
+     ```
 
-```bash
-uv run --env-file .env fibona.py --boot-mode ./your_custom_bootstrap.py
-```
+     Omit the task to enter it interactively.
 
-`--boot-mode` accepts `terminal`, `minimal`, or a Python file path.
+   - To define your own startup behavior, write your bootstrap cell in `./your_custom_bootstrap.py`, then run:
+
+     ```bash
+     uv run --env-file .env fibona.py --boot-mode ./your_custom_bootstrap.py
+     ```
+
+   `--boot-mode` accepts `terminal`, `minimal`, or a Python file path.
 
 ## Use the core as a library
 
