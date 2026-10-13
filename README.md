@@ -54,8 +54,6 @@ Requires Python 3.12+ and `uv`.
      uv run --env-file .env fibona.py --boot-mode ./your_custom_bootstrap.py
      ```
 
-   `--boot-mode` accepts `terminal`, `minimal`, or a Python file path.
-
 ## Use the core as a library
 
 From another `uv` project, add a local checkout:
