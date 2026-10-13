@@ -285,7 +285,6 @@ class Agent:
         env: IPythonEnv | None = None,
         on_cell: Callable[[int, str, str], None] | None = None,
         on_result: Callable[[int, CellResult], None] | None = None,
-        max_failures: int = 3,
         debug: bool = False,
     ) -> None:
         """Execute bootstrap_cell verbatim, then run the cells selected by its program.
@@ -296,7 +295,7 @@ class Agent:
         on_result receives each cell's final validated result, including the cell that quits.
         The configured cwd must exist; the caller's working directory is restored afterward.
         With debug=True, cells and call_me calls are logged to agent.log in that directory.
-        Raises RuntimeError after max_failures consecutive failed cells; interruptions propagate.
+        Failed cells trigger recovery without a retry limit; interruptions propagate.
         Cells execute synchronously in the calling thread.
         """
         with chdir(self.cwd or Path.cwd()):
@@ -309,7 +308,6 @@ class Agent:
                 raise Quit
 
             code, summary = bootstrap_cell, "Run the bootstrap cell."
-            failures, recovering = 0, False
             while True:
                 slot = Slot()
                 # Restore runtime bindings each cell; mutations to shared objects still persist.
@@ -338,13 +336,8 @@ class Agent:
                 memory.record(code, summary, result)
 
                 if result.error is None:
-                    if not recovering:
-                        failures = 0  # A recovery request succeeding is not yet a successful repair.
-                    code, summary, recovering = slot.code, slot.summary, False
+                    code, summary = slot.code, slot.summary
                     continue
-                failures += 1
-                if failures >= max_failures:
-                    raise RuntimeError(f"{failures} consecutive cells failed; last error:\n{result.error}")
                 # Side effects of the failed cell are not rolled back; the mind repairs from here.
                 message = (
                     self.REPAIR
@@ -353,7 +346,7 @@ class Agent:
                         {"bootstrap_cell": bootstrap_cell, "code": code, "error": result.error}, ensure_ascii=False
                     )
                 )
-                code, summary, recovering = _wake_cell(message), "Repair the failed cell.", True
+                code, summary = _wake_cell(message), "Repair the failed cell."
 
 
 def _wake_cell(message: str) -> str:
