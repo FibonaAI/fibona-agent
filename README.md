@@ -1,16 +1,16 @@
 ![Fibona Agent](assets/fibona-header.png)
 
 <p align="center">
-  <a href="https://x.com/fibonaai"><img src="https://img.shields.io/badge/X-000000?style=for-the-badge&amp;logo=x&amp;logoColor=white" alt="X"></a>
-  <a href="https://www.youtube.com/@FibonaAI"><img src="https://img.shields.io/badge/YOUTUBE-FF0000?style=for-the-badge&amp;logo=youtube&amp;logoColor=white" alt="YouTube"></a>
-  <a href="https://fibona.ai/"><img src="https://img.shields.io/badge/WEBSITE-AA4E35?style=for-the-badge" alt="Website"></a>
+  <a href="https://fibona.ai/projects/fibona-agent">📄 Project Page</a> ·
+  <a href="https://fibona.ai/projects/fibona-agent#film">▶️ Video Intro</a> ·
+  <a href="https://fibona.ai/blog/fibona-agent">📑 Tech Report</a> ·
+  <a href="https://fibona.ai/fibona-agent">🚀 Try Online Demo</a> ·
+  <a href="https://x.com/fibonaai">𝕏 X</a>
 </p>
 
 Fibona Agent is **a minimal, general-purpose, self-improving agent** that writes its own code as it runs.
 
 It starts with only a tiny, general-purpose core, which we define as its "self." From this core, it can build its entire system step by step, becoming whatever it needs to be to get the task done. When something goes wrong, it can repair itself and return to a working state autonomously.
-
-[Project Page](https://fibona.ai/projects/fibona-agent) · [Video Intro](https://fibona.ai/projects/fibona-agent#film) · [Tech Report](https://fibona.ai/blog/fibona-agent) · [Try Online Demo](https://fibona.ai/fibona-agent)
 
 ## Quick start
 
