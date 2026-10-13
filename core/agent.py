@@ -350,5 +350,12 @@ class Agent:
 
 
 def _wake_cell(message: str) -> str:
-    """A cell that only wakes the mind with `message`; the mind chooses the next cell."""
-    return f"response = call_me(input={message!r})\nprint(response.output_text)"
+    """Wake the mind with working context when available, falling back if it is broken."""
+    return f"""\
+try:
+    _repair_context = build_context() if callable(globals().get("build_context")) else []
+except Exception as _context_error:
+    _repair_context = [{{"role": "user", "content": f"build_context() failed: {{_context_error}}"}}]
+response = call_me(input=[*_repair_context, {{"role": "user", "content": {message!r}}}])
+print(response.output_text)
+"""
