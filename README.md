@@ -45,7 +45,7 @@ Let me chat with you through it. Keep me updated as you build it."
 
 Omit the task to enter it interactively.
 
-For custom startup behavior, write a Python bootstrap file:
+To define your own startup behavior, write your bootstrap cell in `./your_custom_bootstrap.py`, then run:
 
 ```bash
 uv run --env-file .env fibona.py --boot-mode ./your_custom_bootstrap.py
