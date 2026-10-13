@@ -4,7 +4,9 @@ This directory contains startup programs for Fibona. Each program defines the ag
 
 Programs follow the `bootstraps/<name>/init.py` layout. Fibona executes `init.py` as the bootstrap cell; supporting code and documentation live alongside it.
 
-Run an included bootstrap with `fibona.py --boot-mode minimal` or `fibona.py --boot-mode terminal`. Any other `--boot-mode` value is treated as a Python file path, for example `fibona.py --boot-mode ./your_custom_bootstrap.py`. Relative paths resolve from the current directory; absolute paths and `~` are also supported.
+Use `--boot-mode terminal`, `--boot-mode minimal`, or `--boot-mode ./your_custom_bootstrap.py`.
 
-- [minimal](minimal/init.py) reads a task from the console and calls the model.
-- [terminal](terminal/README.md) sets up a terminal UI and the agent's working context.
+- [terminal](terminal/README.md) sets up a terminal UI and working context.
+- [minimal](minimal/init.py) sends the command-line task to the model, or prompts if omitted.
+
+Remaining CLI arguments are available as `argv` in the IPython session.

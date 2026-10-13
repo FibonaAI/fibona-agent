@@ -26,18 +26,24 @@ Requires Python 3.12+ and `uv`.
 
    Set `FIBONA_MODEL` to a model supported by your provider. If omitted, it defaults to `gpt-6-astra`.
 
-2. Start the terminal UI from the project root (recommended):
+2. Start the terminal UI from the project root:
 
    ```bash
    uv run --env-file .env fibona.py --boot-mode terminal
    ```
    See the [terminal bootstrap README](bootstraps/terminal/README.md) for its design and controls.
 
-For the most minimal starting point, try `minimal`. It only reads a task from the console and send the task to the agent core:
+Or start in the minimal mode and let the agent build its own chat TUI:
 
 ```bash
-uv run --env-file .env fibona.py --boot-mode minimal
+uv run --env-file .env fibona.py --boot-mode minimal \
+  "Build and launch a premium chat TUI in this terminal:
+refined dark colors, generous spacing, elegant Markdown and code rendering,
+clear activity status, and multiline input. Press Enter to send messages.
+Let me chat with you through it. Keep me updated as you build it."
 ```
+
+Omit the task to enter it interactively.
 
 To define your own startup behavior, write your bootstrap cell in `./your_custom_bootstrap.py`, then run:
 
@@ -45,7 +51,7 @@ To define your own startup behavior, write your bootstrap cell in `./your_custom
 uv run --env-file .env fibona.py --boot-mode ./your_custom_bootstrap.py
 ```
 
-`--boot-mode` selects the included `terminal` or `minimal` bootstrap. Any other value is treated as a Python file path (relative to the current directory, absolute, or starting with `~`).
+`--boot-mode` accepts `terminal`, `minimal`, or a Python file path.
 
 ## Use the core as a library
 
