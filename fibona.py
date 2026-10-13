@@ -13,12 +13,14 @@ from core.env import IPythonEnv
 
 def main() -> int:
     bootstrap_dir = Path(__file__).resolve().parent / "bootstraps"
-    parser = argparse.ArgumentParser(description="Run a built-in bootstrap or a Python file as the bootstrap cell.")
+    parser = argparse.ArgumentParser(
+        description="Run a built-in bootstrap or a Python file as the bootstrap cell.", allow_abbrev=False
+    )
     parser.add_argument(
         "--boot-mode", required=True, help="minimal, terminal, or a Python file to execute as the bootstrap cell."
     )
     parser.add_argument("--debug", action="store_true", help="Record cells and model calls in agent.log.")
-    args = parser.parse_args()
+    args, remaining_args = parser.parse_known_args()
     bootstrap_file = (
         bootstrap_dir / args.boot_mode / "init.py"
         if args.boot_mode in {"minimal", "terminal"}
@@ -34,6 +36,7 @@ def main() -> int:
         with OpenAI() as client:
             mind = Mind(client, os.getenv("FIBONA_MODEL", "gpt-6-astra"), INSTRUCTIONS)
             env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
+            env.bind(argv=remaining_args)
             Agent(mind, cwd=".").run(bootstrap_cell, env=env, debug=args.debug)
     except KeyboardInterrupt:
         return 130
