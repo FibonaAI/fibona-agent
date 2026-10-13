@@ -10,7 +10,7 @@ Fibona Agent is **a minimal, general-purpose, self-improving agent** that writes
 
 It starts with only a tiny, general-purpose core, which we define as its "self." From this core, it can build its entire system step by step, becoming whatever it needs to be to get the task done. When something goes wrong, it can repair itself and return to a working state autonomously.
 
-[Project Page](https://fibona.ai/projects/fibona-agent) · [Tech Report](https://fibona.ai/blog/fibona-agent) · [Try Online Demo](https://fibona.ai/fibona-agent)
+[Project Page](https://fibona.ai/projects/fibona-agent) · [Video Intro](https://fibona.ai/projects/fibona-agent#film) · [Tech Report](https://fibona.ai/blog/fibona-agent) · [Try Online Demo](https://fibona.ai/fibona-agent)
 
 ## Quick start
 
