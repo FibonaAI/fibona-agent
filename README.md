@@ -33,7 +33,7 @@ Requires Python 3.12+ and `uv`.
    ```
    See the [terminal bootstrap README](bootstraps/terminal/README.md) for its design and controls.
 
-For a minimal start, let the agent build its own chat TUI:
+Or for a minimal start, you can let the agent build its own chat TUI:
 
 ```bash
 uv run --env-file .env fibona.py --boot-mode minimal \
