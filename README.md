@@ -2,16 +2,16 @@
 
 <p align="center">
   <strong>
-    <a href="https://fibona.ai/projects/fibona-agent">Project Page</a> ·
-    <a href="https://fibona.ai/projects/fibona-agent#film">▷ Video Intro</a> ·
-    <a href="https://fibona.ai/blog/fibona-agent">Tech Report</a> ·
-    <a href="https://fibona.ai/fibona-agent">Try Demo</a>
+    <a href="https://fibona.ai/projects/fibona-agent"><img src="assets/readme-icons/project.svg" width="16" height="16" alt=""> Project Page</a> ·
+    <a href="https://fibona.ai/projects/fibona-agent#film"><img src="assets/readme-icons/video.svg" width="16" height="16" alt=""> Video Intro</a> ·
+    <a href="https://fibona.ai/blog/fibona-agent"><img src="assets/readme-icons/report.svg" width="16" height="16" alt=""> Tech Report</a> ·
+    <a href="https://fibona.ai/fibona-agent"><img src="assets/readme-icons/demo.svg" width="16" height="16" alt=""> Try Demo</a>
   </strong>
 </p>
 <p align="center">
-  <a href="https://x.com/fibonaai">𝕏</a> ·
-  <a href="https://www.youtube.com/@FibonaAI">YouTube</a> ·
-  <a href="https://fibona.ai/">Website</a>
+    <a href="https://x.com/fibonaai"><img src="assets/readme-icons/x.svg" width="16" height="16" alt=""> X</a> ·
+    <a href="https://www.youtube.com/@FibonaAI"><img src="assets/readme-icons/youtube.svg" width="16" height="16" alt=""> YouTube</a> ·
+    <a href="https://fibona.ai/"><img src="assets/readme-icons/website.svg" width="16" height="16" alt=""> Website</a>
 </p>
 
 Fibona Agent is **a minimal, general-purpose, self-improving agent** that writes its own code as it runs.
