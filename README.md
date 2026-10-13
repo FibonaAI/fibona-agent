@@ -31,11 +31,9 @@ Requires Python 3.12+ and `uv`.
    ```bash
    uv run --env-file .env fibona.py --boot-mode terminal
    ```
-
-   Enter your task in the terminal input box. Press **Enter** to send.
    See the [terminal bootstrap README](bootstraps/terminal/README.md) for its design and controls.
 
-For the most minimal starting point, try `minimal`. It reads a task from the console and calls the model:
+For the most minimal starting point, try `minimal`. It only reads a task from the console and send the task to the agent core:
 
 ```bash
 uv run --env-file .env fibona.py --boot-mode minimal
