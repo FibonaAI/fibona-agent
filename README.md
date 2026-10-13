@@ -1,8 +1,8 @@
 ![Fibona Agent](assets/fibona-header.png)
 
 <p align="center">
-  <a href="https://x.com/fibonaai"><img src="https://img.shields.io/badge/X-181818?style=for-the-badge&amp;logo=x&amp;logoColor=white" alt="X"></a>
   <a href="https://fibona.ai/"><img src="https://img.shields.io/badge/WEBSITE-527FB5?style=for-the-badge" alt="Website"></a>
+  <a href="https://x.com/fibonaai"><img src="https://img.shields.io/badge/X-181818?style=for-the-badge&amp;logo=x&amp;logoColor=white" alt="X"></a>
   <a href="https://www.youtube.com/@FibonaAI"><img src="https://img.shields.io/badge/YOUTUBE-C94343?style=for-the-badge&amp;logo=youtube&amp;logoColor=white" alt="YouTube"></a>
 </p>
 
@@ -10,12 +10,7 @@ Fibona Agent is **a minimal, general-purpose, self-improving agent** that writes
 
 It starts with only a tiny, general-purpose core, which we define as its "self." From this core, it can build its entire system step by step, becoming whatever it needs to be to get the task done. When something goes wrong, it can repair itself and return to a working state autonomously.
 
-<p align="left">
-  <a href="https://fibona.ai/projects/fibona-agent"><img src="assets/readme-links/project.svg" width="114" height="24" alt="Project Page" align="absmiddle"></a> &nbsp;&nbsp;
-  <a href="https://fibona.ai/projects/fibona-agent#film"><img src="assets/readme-links/video.svg" width="98" height="24" alt="Video Intro" align="absmiddle"></a> &nbsp;&nbsp;
-  <a href="https://fibona.ai/blog/fibona-agent"><img src="assets/readme-links/report.svg" width="109" height="24" alt="Tech Report" align="absmiddle"></a> &nbsp;&nbsp;
-  <a href="https://fibona.ai/fibona-agent"><img src="assets/readme-links/demo.svg" width="117" height="24" alt="Online Demo" align="absmiddle"></a>
-</p>
+[<img src="assets/readme-icons/project.svg" width="16" height="16" align="absmiddle" alt=""> Project Page](https://fibona.ai/projects/fibona-agent) · [<img src="assets/readme-icons/video.svg" width="16" height="16" align="absmiddle" alt=""> Video Intro](https://fibona.ai/projects/fibona-agent#film) · [<img src="assets/readme-icons/report.svg" width="16" height="16" align="absmiddle" alt=""> Tech Report](https://fibona.ai/blog/fibona-agent) · [<img src="assets/readme-icons/demo.svg" width="16" height="16" align="absmiddle" alt=""> Online Demo](https://fibona.ai/fibona-agent)
 
 ## Quick start
 
