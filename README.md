@@ -40,10 +40,11 @@ Requires Python 3.12+ and `uv`.
 
      ```bash
      uv run --env-file .env fibona.py --boot-mode minimal \
-       "Build and launch a premium chat TUI in this terminal:
-     refined dark colors, generous spacing, elegant Markdown and code rendering,
-     clear activity status, and multiline input. Press Enter to send messages.
-     Let me chat with you through it. Keep me updated as you build it."
+       "Build and launch a premium chat TUI in this terminal.
+       I want to chat with you through it.
+       The TUI has refined dark colors, generous spacing, elegant rendering,
+       clear activity status, and multiline input. Press Enter to send messages.
+       Keep me updated as you build it."
      ```
 
      Omit the task to enter it interactively.
