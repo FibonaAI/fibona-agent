@@ -5,7 +5,7 @@
     <a href="https://fibona.ai/projects/fibona-agent"><img src="assets/readme-icons/project.svg" width="16" height="16" alt=""> Project Page</a> ·
     <a href="https://fibona.ai/projects/fibona-agent#film"><img src="assets/readme-icons/video.svg" width="16" height="16" alt=""> Video Intro</a> ·
     <a href="https://fibona.ai/blog/fibona-agent"><img src="assets/readme-icons/report.svg" width="16" height="16" alt=""> Tech Report</a> ·
-    <a href="https://fibona.ai/fibona-agent"><img src="assets/readme-icons/demo.svg" width="16" height="16" alt=""> Try Demo</a>
+    <a href="https://fibona.ai/fibona-agent"><img src="assets/readme-icons/demo.svg" width="16" height="16" alt=""> Online Demo</a>
   </strong>
 </p>
 <p align="center">
