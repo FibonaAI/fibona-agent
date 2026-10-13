@@ -1,16 +1,21 @@
 ![Fibona Agent](assets/fibona-header.png)
 
 <p align="center">
-  <a href="https://x.com/fibonaai"><img src="https://img.shields.io/badge/X-000000?style=for-the-badge&amp;logo=x&amp;logoColor=white" alt="X"></a>
-  <a href="https://www.youtube.com/@FibonaAI"><img src="https://img.shields.io/badge/YOUTUBE-FF0000?style=for-the-badge&amp;logo=youtube&amp;logoColor=white" alt="YouTube"></a>
-  <a href="https://fibona.ai/"><img src="https://img.shields.io/badge/WEBSITE-AA4E35?style=for-the-badge" alt="Website"></a>
+  <a href="https://x.com/fibonaai"><img src="https://img.shields.io/badge/X-181818?style=for-the-badge&amp;logo=x&amp;logoColor=white" alt="X"></a>
+  <a href="https://fibona.ai/"><img src="https://img.shields.io/badge/WEBSITE-527FB5?style=for-the-badge" alt="Website"></a>
+  <a href="https://www.youtube.com/@FibonaAI"><img src="https://img.shields.io/badge/YOUTUBE-C94343?style=for-the-badge&amp;logo=youtube&amp;logoColor=white" alt="YouTube"></a>
 </p>
 
 Fibona Agent is **a minimal, general-purpose, self-improving agent** that writes its own code as it runs.
 
 It starts with only a tiny, general-purpose core, which we define as its "self." From this core, it can build its entire system step by step, becoming whatever it needs to be to get the task done. When something goes wrong, it can repair itself and return to a working state autonomously.
 
-[Project Page](https://fibona.ai/projects/fibona-agent) · [Video Intro](https://fibona.ai/projects/fibona-agent#film) · [Tech Report](https://fibona.ai/blog/fibona-agent) · [Try Online Demo](https://fibona.ai/fibona-agent)
+<p align="left">
+  <a href="https://fibona.ai/projects/fibona-agent"><img src="assets/readme-links/project.svg" width="114" height="24" alt="Project Page" align="absmiddle"></a> &nbsp;&nbsp;
+  <a href="https://fibona.ai/projects/fibona-agent#film"><img src="assets/readme-links/video.svg" width="98" height="24" alt="Video Intro" align="absmiddle"></a> &nbsp;&nbsp;
+  <a href="https://fibona.ai/blog/fibona-agent"><img src="assets/readme-links/report.svg" width="109" height="24" alt="Tech Report" align="absmiddle"></a> &nbsp;&nbsp;
+  <a href="https://fibona.ai/fibona-agent"><img src="assets/readme-links/demo.svg" width="117" height="24" alt="Online Demo" align="absmiddle"></a>
+</p>
 
 ## Quick start
 
