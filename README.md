@@ -33,7 +33,7 @@ Requires Python 3.12+ and `uv`.
    ```
    See the [terminal bootstrap README](bootstraps/terminal/README.md) for its design and controls.
 
-For the most minimal starting point, try `minimal`. It passes your task directly to the agent core. For example, let the agent build its own chat TUI from scratch:
+For a minimal start, let the agent build its own chat TUI:
 
 ```bash
 uv run --env-file .env fibona.py --boot-mode minimal \
@@ -43,15 +43,15 @@ clear activity status, and multiline input. Press Enter to send messages.
 Let me chat with you through it. Keep me updated as you build it."
 ```
 
-Remaining arguments are joined with spaces as the task. Quote the task to preserve spacing and protect shell special characters. If the task is omitted or empty, `minimal` prompts for it in the console.
+Omit the task to enter it interactively.
 
-To define your own startup behavior, write your bootstrap cell in `./your_custom_bootstrap.py`, then run:
+For custom startup behavior, write a Python bootstrap file:
 
 ```bash
 uv run --env-file .env fibona.py --boot-mode ./your_custom_bootstrap.py
 ```
 
-`--boot-mode` selects the included `terminal` or `minimal` bootstrap. Any other value is treated as a Python file path (relative to the current directory, absolute, or starting with `~`).
+`--boot-mode` accepts `terminal`, `minimal`, or a Python file path.
 
 ## Use the core as a library
 
