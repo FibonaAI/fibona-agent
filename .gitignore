@@ -19,6 +19,3 @@ agent.log
 
 # Local test artifacts
 /tmp/
-
-# ESP32 bridge config (API key)
-experiments/esp32/config.py
