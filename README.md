@@ -1,11 +1,17 @@
 ![Fibona Agent](assets/fibona-header.png)
 
 <p align="center">
-  <a href="https://fibona.ai/projects/fibona-agent">📄 Project Page</a> ·
-  <a href="https://fibona.ai/projects/fibona-agent#film">▶️ Video Intro</a> ·
-  <a href="https://fibona.ai/blog/fibona-agent">📑 Tech Report</a> ·
-  <a href="https://fibona.ai/fibona-agent">🚀 Try Online Demo</a> ·
-  <a href="https://x.com/fibonaai">𝕏 X</a>
+  <strong>
+    <a href="https://fibona.ai/projects/fibona-agent">Project Page</a> ·
+    <a href="https://fibona.ai/projects/fibona-agent#film">▷ Video Intro</a> ·
+    <a href="https://fibona.ai/blog/fibona-agent">Tech Report</a> ·
+    <a href="https://fibona.ai/fibona-agent">Try Demo</a>
+  </strong>
+</p>
+<p align="center">
+  <a href="https://x.com/fibonaai">𝕏</a> ·
+  <a href="https://www.youtube.com/@FibonaAI">YouTube</a> ·
+  <a href="https://fibona.ai/">Website</a>
 </p>
 
 Fibona Agent is **a minimal, general-purpose, self-improving agent** that writes its own code as it runs.
