@@ -299,7 +299,7 @@ Repair the failure and continue the program.
         on_result receives each cell's final validated result, including the cell that quits.
         The configured cwd must exist; the caller's working directory is restored afterward.
         With debug=True, cells and call_me calls are logged to agent.log in that directory.
-        Failed cells trigger recovery without a retry limit; interruptions propagate.
+        Interruptions propagate.
         Cells execute synchronously in the calling thread.
         """
         with chdir(self.cwd or Path.cwd()):
