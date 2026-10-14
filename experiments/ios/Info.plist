@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>Fibona</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>Fibona</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>MinimumOSVersion</key>
+	<string>17.0</string>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<!-- Capabilities are fixed at build time, so declare them all up front; the agent asks at run time. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Fibona uses Bluetooth for what you ask it to build.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Fibona uses your calendars for what you ask it to build.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Fibona uses the camera for what you ask it to build.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Fibona uses your contacts for what you ask it to build.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Fibona uses Face ID for what you ask it to build.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Fibona uses your location for what you ask it to build.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Fibona uses the microphone for what you ask it to build.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Fibona uses motion data for what you ask it to build.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Fibona uses your photos for what you ask it to build.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Fibona uses your reminders for what you ask it to build.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Fibona uses speech recognition for what you ask it to build.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Fibona reads health data for what you ask it to build.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Fibona writes health data for what you ask it to build.</string>
+	<key>NSHomeKitUsageDescription</key>
+	<string>Fibona uses your home accessories for what you ask it to build.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Fibona uses your location in the background for what you ask it to build.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>fetch</string>
+		<string>location</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).task</string>
+	</array>
+</dict>
+</plist>
