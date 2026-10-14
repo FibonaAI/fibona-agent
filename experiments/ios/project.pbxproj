@@ -142,6 +142,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Fibona.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
 				INFOPLIST_FILE = Info.plist;
 				OTHER_LDFLAGS = (
 					"-framework",
@@ -156,6 +157,37 @@
 			};
 			name = Debug;
 		};
+		F1B0000000000000000000E4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+			};
+			name = Release;
+		};
+		F1B0000000000000000000E5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Fibona.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = Info.plist;
+				OTHER_LDFLAGS = (
+					"-framework",
+					UIKit,
+					"-framework",
+					JavaScriptCore,
+					"-framework",
+					Security,
+				);
+				PRODUCT_NAME = Fibona;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -163,6 +195,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F1B0000000000000000000E2 /* Debug */,
+				F1B0000000000000000000E4 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
@@ -171,6 +204,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F1B0000000000000000000E3 /* Debug */,
+				F1B0000000000000000000E5 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
