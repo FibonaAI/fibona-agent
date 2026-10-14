@@ -1,14 +1,18 @@
 SDK := $(shell xcrun --sdk iphonesimulator --show-sdk-path)
 APP = build/Fibona.app
 SIM ?= Fibona
-TEAM ?= S7668W2G3W
+# Signing teams have no default: pass TEAM=<your development team> (and TF_TEAM= for TestFlight).
+TEAM ?=
+# TestFlight: a paid team, and the App Store Connect app's bundle identifier.
+TF_TEAM ?=
+TF_BUNDLE ?= ai.fibona.ios.test
 DEVICE_BUNDLE ?= ai.fibona.ios.$(TEAM)
 # The first paired iPhone connected by cable; pass DEVICE=<identifier from `xcrun devicectl list devices`> to choose.
 DEVICE ?= $(shell xcrun devicectl list devices --hide-headers --hide-default-columns --columns identifier \
   --filter "connectionProperties.transportType == 'wired'" 2>/dev/null | grep -v "No devices" | head -1)
 
 .DEFAULT_GOAL := build
-.PHONY: build run device
+.PHONY: build run device testflight
 
 # The app icon, from public/favicon.svg: full-bleed on its own background (iOS rounds the corners), without alpha.
 ICON = Assets.xcassets/AppIcon.appiconset/icon.png
@@ -26,7 +30,7 @@ build: $(ICON) $(HANDLE)  # The app for the simulator. The model settings are as
 	mkdir -p $(APP)
 	xcrun --sdk iphonesimulator clang -fobjc-arc -target arm64-apple-ios17.0-simulator -isysroot $(SDK) \
 	  -framework UIKit -framework JavaScriptCore -framework Security -o $(APP)/Fibona main.m
-	sed 's/$$(PRODUCT_BUNDLE_IDENTIFIER)/ai.fibona.ios/g' Info.plist > $(APP)/Info.plist
+	sed 's/$$(PRODUCT_BUNDLE_IDENTIFIER)/ai.fibona.ios/g; s/$$(CURRENT_PROJECT_VERSION)/1/g' Info.plist > $(APP)/Info.plist
 	cp core.js app.js $(APP)/
 	xcrun actool Assets.xcassets --compile $(APP) --platform iphonesimulator --minimum-deployment-target 17.0 \
 	  --target-device iphone --app-icon AppIcon --output-partial-info-plist build/assets.plist >/dev/null
@@ -47,6 +51,7 @@ Fibona.xcodeproj/project.pbxproj: project.pbxproj
 	cp $< $@
 
 device: Fibona.xcodeproj/project.pbxproj $(ICON) $(HANDLE)
+	test -n "$(TEAM)" || { echo "Pass TEAM=<your development team>"; exit 1; }
 	test -n "$(DEVICE)" || { echo "No iPhone connected by cable: unlock it, trust this Mac, or pass DEVICE=..."; exit 1; }
 	xcodebuild -project Fibona.xcodeproj -scheme Fibona -configuration Debug -quiet \
 	  -destination id=$$(xcrun devicectl device info details --device $(DEVICE) | awk '/ udid:/ {print $$NF}') \
@@ -55,3 +60,17 @@ device: Fibona.xcodeproj/project.pbxproj $(ICON) $(HANDLE)
 	xcrun devicectl device install app --device $(DEVICE) build/device/Debug-iphoneos/Fibona.app
 	xcrun devicectl device process launch --console --terminate-existing \
 	  --device $(DEVICE) $(DEVICE_BUNDLE)
+
+# Archive for TF_TEAM and upload to App Store Connect, where the app must already exist with bundle TF_BUNDLE.
+# Signing is automatic with this Mac's Xcode account; the build number is the time, so each upload is newer.
+testflight: Fibona.xcodeproj/project.pbxproj $(ICON) $(HANDLE)
+	test -n "$(TF_TEAM)" || { echo "Pass TF_TEAM=<your paid development team>"; exit 1; }
+	xcodebuild -project Fibona.xcodeproj -scheme Fibona -configuration Release -destination generic/platform=iOS \
+	  -archivePath build/Fibona.xcarchive -quiet -allowProvisioningUpdates archive \
+	  DEVELOPMENT_TEAM=$(TF_TEAM) PRODUCT_BUNDLE_IDENTIFIER=$(TF_BUNDLE) CURRENT_PROJECT_VERSION=$$(date +%Y%m%d%H%M)
+	printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0"><dict>' \
+	  '<key>method</key><string>app-store-connect</string><key>destination</key><string>upload</string>' \
+	  '<key>teamID</key><string>$(TF_TEAM)</string><key>signingStyle</key><string>automatic</string>' \
+	  '</dict></plist>' > build/ExportOptions.plist
+	xcodebuild -exportArchive -archivePath build/Fibona.xcarchive -exportOptionsPlist build/ExportOptions.plist \
+	  -exportPath build/export -allowProvisioningUpdates
