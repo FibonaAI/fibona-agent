@@ -350,6 +350,7 @@ Repair the failure and continue the program.
                         {"bootstrap_cell": bootstrap_cell, "code": code, "error": result.error}, ensure_ascii=False
                     )
                 )
+                # the recovery cell
                 code, summary = _wake_cell(message), "Repair the failed cell."
 
 
