@@ -68,6 +68,7 @@ class IPythonEnv:
         self.shell.ast_node_interactivity = "none"
         # Tracebacks go to CellResult.error instead of being printed into the output.
         self.shell._showtraceback = lambda *args, **kwargs: None
+        # Quit is handled by `execute`, so IPython must not print or swallow it as an ordinary error.
         self.shell.set_custom_exc((Quit,), lambda *args, **kwargs: [])
 
     def bind(self, **names) -> None:
@@ -78,7 +79,7 @@ class IPythonEnv:
     def execute(self, code: str) -> CellResult:
         """Return cell output and errors; Quit sets the quit flag, KeyboardInterrupt propagates."""
         buffer = io.StringIO()
-        self.bind(input=self.read_input)
+        self.bind(input=self.read_input)  # Rebound every cell, so a cell that replaced `input` does not persist.
         stdout = Tee(buffer) if self.stdout is None else Tee(self.stdout, buffer)
         stderr = Tee(buffer) if self.stderr is None else Tee(self.stderr, buffer)
         with redirect_stdout(stdout), redirect_stderr(stderr):

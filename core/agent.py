@@ -127,7 +127,7 @@ Submit = Callable[[str, str], None]
 class Mind:
     """The agent's mind: instructions, model and the `set_next_cell` tool.
 
-    Loaded only by `call_me` (`wake`), each cell waking this mind with memory
+    Loaded only by `call_me` (`wake`): each cell wakes this mind with the input it builds
     to decide the next cell.
     """
 
@@ -213,10 +213,12 @@ class Mind:
 
 
 def _input_items(value) -> list:
+    """A string becomes one user message; a list of items is used as given."""
     return [{"role": "user", "content": value}] if isinstance(value, str) else list(value)
 
 
 def _run_host_tool(call: ResponseFunctionToolCall, submit: Submit) -> str:
+    """Run a `set_next_cell` call; the JSON result goes back to the mind, so a rejected submission is not raised."""
     try:
         args = json.loads(call.arguments)
         if not args.get("code", "").strip():
@@ -350,7 +352,7 @@ Repair the failure and continue the program.
                         {"bootstrap_cell": bootstrap_cell, "code": code, "error": result.error}, ensure_ascii=False
                     )
                 )
-                # the recovery cell
+                # The recovery cell: wakes the mind with the failure so it can submit a repaired next cell.
                 code, summary = _wake_cell(message), "Repair the failed cell."
 
 

@@ -20,13 +20,17 @@ Record verified outcomes in completed; planned work belongs in pending. build_co
 History summaries record intent; use cell output and errors to determine what actually happened.
 """.strip()
 
+# Names the host or startup put in, as opposed to what cells defined; `variables` hides them.
 _EXCLUDED_NAMES = {"task", "call_me", "call_llm_api", "quit", "history", "input", "source_code"}
 
 
 def initialize_context(namespace):
-    """Set up working state and return a context builder bound to the live REPL namespace."""
+    """Set up working state and return a context builder bound to the live REPL namespace.
+
+    Merges into instructions, source_code and var_docs that earlier bootstrap code already set.
+    """
     namespace.update(
-        startup_task=namespace["task"],
+        startup_task=namespace["task"],  # Preserve the initial task when the current goal changes.
         task_state={"goal": namespace["task"], "constraints": [], "completed": [], "pending": []},
         source_code={
             **namespace.get("source_code", {}),
@@ -35,8 +39,8 @@ def initialize_context(namespace):
             "bootstraps/terminal/context.py": Path(__file__).read_text(encoding="utf-8"),
         },
         instructions="\n\n".join(part for part in (namespace.get("instructions", ""), CONTEXT_INSTRUCTIONS) if part),
-        RECENT=namespace.get("RECENT", 10),
-        var_docs={
+        RECENT=namespace.get("RECENT", 10),  # Finished task cells in the default context; others stay in history.
+        var_docs={  # Variable name -> description, maintained by the agent in this session.
             **namespace.get("var_docs", {}),
             "startup_task": "Original task; preserve when the current goal changes.",
             "task_state": "Current goal, constraints, verified completed work and pending work; update before call_me().",
@@ -47,7 +51,7 @@ def initialize_context(namespace):
 
 
 def variables(namespace):
-    """Select names and types from the live session; cells may replace this policy."""
+    """What cells have defined: name -> type, with the length of containers. Cells may replace this policy."""
     hidden = namespace["get_ipython"]().user_ns_hidden
     found = {}
     for name, value in namespace.items():
@@ -69,6 +73,35 @@ def build_context(namespace):
 
     Cells can replace the bound build_context and variables helpers, working instructions,
     var_docs and RECENT. The original host records are only read here.
+
+    Returns the working instructions as a developer message, then the context as a user message.
+
+    Example (cell 14; `report` has no description in `var_docs`; the user message):
+        Startup task: Summarize the Hacker News front page
+        Current goal: Summarize the Hacker News front page
+        Constraints: []
+        Completed: ['fetched 30 pages']
+        Pending: ['write report.md']
+        Working directory: /home/user/work
+        Current task cell: 14
+        Variables: pages: dict[30] (url -> html, fetched live), failed: list[2], report: str
+        cell 0: Start the task. [ok]
+        cell 1: Fetch the front page [failed: HTTPError: HTTP Error 403: Forbidden]
+        cell 2: Fetch with a browser User-Agent [ok]
+        Recent task cells:
+        ### cell 12 · Summarize each page in one line
+        code:
+        summaries = [call_llm_api("One line:\\n" + html) for html in pages.values()]
+        output:
+        Summarized 30 pages.
+
+        ### cell 13 · Write the report
+        code:
+        open("report.md", "w").write(render(summaries))
+        error:
+        Traceback (most recent call last):
+        ...
+        NameError: name 'render' is not defined
     """
     history = namespace["history"]
     var_docs = namespace["var_docs"]
@@ -97,6 +130,7 @@ def build_context(namespace):
         parts = [f"### cell {number} · {cell['summary']}", "code:", cell["code"].strip()]
         if cell["output"].strip():
             output = cell["output"].strip()
+            # Keep short output intact; for long output keep the head and tail and point to the full text.
             if len(output) > 1000:
                 output = output[:500] + f"\n[Full output: history[{number}]['output']]\n" + output[-500:]
             parts += ["output:", output]
