@@ -36,7 +36,7 @@ def main() -> int:
         with OpenAI() as client:
             mind = Mind(client, os.getenv("FIBONA_MODEL", "gpt-6-astra"), INSTRUCTIONS)
             env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
-            env.bind(argv=remaining_args)
+            env.bind(argv=remaining_args)  # Arguments this launcher did not consume, for the bootstrap to read.
             Agent(mind, cwd=".").run(bootstrap_cell, env=env, debug=args.debug)
     except KeyboardInterrupt:
         return 130

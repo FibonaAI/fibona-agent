@@ -116,7 +116,8 @@ class Terminal:
         self.thread = None
         self.previous_io = None
         self.cell_slot = None
-        self.completed_cell = None
+        self.completed_cell = None  # (number, result, slot) of the last cell IPython finished, until core confirms it.
+        # A replacement UI continues the previous one's pending cell summary.
         previous = shell.user_ns.get("terminal")
         current = getattr(previous, "current_cell", None)
         self.next_summary = current[1] if current else "Initialize the terminal."
@@ -124,6 +125,7 @@ class Terminal:
         self.cell_buffer = None
         self.attached = False
         self.previous_excepthook = shell.sys_excepthook if sys.excepthook == shell.excepthook else sys.excepthook
+        # call_llm_api is the bound Mind.query; recover the Mind to show model progress. None outside a core session.
         self.mind = getattr(shell.user_ns.get("call_llm_api"), "__self__", None)
         self.model = self.mind.model if self.mind is not None else "Python"
         self.create_response = self.mind.client.responses.create if self.mind is not None else None
@@ -651,7 +653,7 @@ class Terminal:
             self.call_from_thread(self._append_text, str(prompt) + "\n")
         self.call_from_thread(self._set_state, "Waiting for input").result()
         text = self.inputs.get()
-        if text is None:
+        if text is None:  # The UI closed while waiting.
             raise self.ui_error or KeyboardInterrupt
         return text
 
@@ -670,6 +672,7 @@ class Terminal:
         self.current_cell = (number, self.next_summary, info.raw_cell)
         self._record_cell(*self.current_cell)
         self.previous_io = (sys.stdout, sys.stderr, namespace["input"])
+        # Core's capture buffer, if any: it already holds output printed before this hook ran.
         self.cell_buffer = next(
             (stream for stream in reversed(getattr(sys.stdout, "streams", ())) if isinstance(stream, io.StringIO)),
             None,
@@ -678,7 +681,7 @@ class Terminal:
             prefix = self.cell_buffer.getvalue()
             self.notebook.output("stdout", prefix)
             self.call_from_thread(self._append_output, prefix)
-        self.cell_slot = namespace["call_me"].keywords["submit"].__self__
+        self.cell_slot = namespace["call_me"].keywords["submit"].__self__  # The Slot core bound for this cell.
         namespace["input"] = self._read_input
         sys.stdout, sys.stderr = EventStream(self, "stdout", sys.stdout), EventStream(self, "stderr", sys.stderr)
 
@@ -771,6 +774,7 @@ class Terminal:
                         "response.reasoning_text.delta",
                         "response.reasoning_summary_text.delta",
                     }:
+                        # Rough token estimate: ~4 bytes per token.
                         self.call_from_thread(self._model_event, "delta", len(event.delta.encode()) / 4)
                     elif event.type == "response.failed":
                         raise RuntimeError(

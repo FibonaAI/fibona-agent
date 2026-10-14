@@ -9,7 +9,7 @@ from uuid import uuid4
 def create_run_log(path, *, key):
     """Create a thread-safe JSONL writer shared by a run's logging decorators."""
     log_path = Path(path).expanduser().resolve()
-    log_path.touch(mode=0o600)
+    log_path.touch(mode=0o600)  # Records include prompts and cell output, so keep them private to the user.
     run_id, log_lock = uuid4().hex, Lock()
 
     def log(event: str, cell: int, **data) -> None:
@@ -19,6 +19,7 @@ def create_run_log(path, *, key):
             ensure_ascii=False,
             default=lambda value: value.model_dump(mode="json") if hasattr(value, "model_dump") else str(value),
         )
+        # Never write the API key to the log, wherever it appears in the record.
         if isinstance(key, str) and key:
             line = line.replace(json.dumps(key, ensure_ascii=False)[1:-1], "[REDACTED]")
         with log_lock, log_path.open("a", encoding="utf-8") as file:
