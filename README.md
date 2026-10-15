@@ -38,6 +38,8 @@ Try the [online demo](https://fibona.ai/fibona-agent) in your browser.
 
 [iOS source and build instructions](experiments/ios/README.md)
 
+[Fibona Agent in Chrome: extension source and installation](experiments/chrome/README.md)
+
 ## Quick start
 
 Requires Python 3.12+ and `uv`.
