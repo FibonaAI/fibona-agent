@@ -4,6 +4,12 @@ Fibona's cell loop running inside an iPhone app: the agent writes JavaScript cel
 
 Tested on the iOS 26.5 simulator and an iPhone 14 Pro, built with Xcode 26.
 
+## Demo
+
+### Evolving itself into a GR21 on iPhone
+
+https://github.com/user-attachments/assets/cc607d8a-8b91-4880-96ed-1d7715edcde8
+
 ## Usage
 
 Requires Xcode and `rsvg-convert` (`brew install librsvg`), which renders the app icon from `public/favicon.svg`. No API key is built into the app: at first launch the console asks for the model API's base URL, key and model, checks them with one request, and keeps them in the phone's keychain.
