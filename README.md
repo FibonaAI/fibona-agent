@@ -13,6 +13,24 @@ It starts with only a tiny, general-purpose core, which we define as its "self."
 
 [<img src="assets/readme-icons/project.svg" width="16" height="16" align="absmiddle" alt=""> Project Page](https://fibona.ai/projects/fibona-agent) · [<img src="assets/readme-icons/video.svg" width="16" height="16" align="absmiddle" alt=""> Video Intro](https://fibona.ai/projects/fibona-agent#film) · [<img src="assets/readme-icons/report.svg" width="16" height="16" align="absmiddle" alt=""> Tech Report](https://fibona.ai/blog/fibona-agent) · [<img src="assets/readme-icons/demo.svg" width="16" height="16" align="absmiddle" alt=""> Online Demo](https://fibona.ai/fibona-agent)
 
+## Demos
+
+Try the [online demo](https://fibona.ai/fibona-agent) in your browser.
+
+### Evolving itself into a GR21 on iPhone
+
+https://github.com/user-attachments/assets/cc607d8a-8b91-4880-96ed-1d7715edcde8
+
+[iOS source and build instructions](experiments/ios/README.md)
+
+### Evolving from a game console into a macOS-style desktop
+
+https://github.com/user-attachments/assets/f793a058-1f83-4846-afdb-7669c4d5cd54
+
+### Evolving itself into a live trading terminal
+
+https://github.com/user-attachments/assets/cd357bbc-ce2c-40fd-978d-f4e99a83e869
+
 ## Quick start
 
 Requires Python 3.12+ and `uv`.
