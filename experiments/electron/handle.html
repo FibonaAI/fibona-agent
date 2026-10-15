@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- The floating spiral button over the console and the app. main.js acts on what it reports: tap, drag, drop, hold. -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  img { position: absolute; left: 8px; top: 8px; width: 48px; height: 48px; border-radius: 24px; cursor: pointer;
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.35); user-select: none; -webkit-user-drag: none; }
+</style>
+</head>
+<body>
+<img src="handle.svg" alt="Fibona console" title="Switch console and app · drag to move · hold to reset">
+<script>
+  const img = document.querySelector("img");
+  let start = null;  // Where the press began, in screen points; null once it is not a tap or drag any more.
+  let moved = false;
+  let timer;
+
+  img.addEventListener("pointerdown", (e) => {
+    img.setPointerCapture(e.pointerId);
+    start = [e.screenX, e.screenY];
+    moved = false;
+    timer = setTimeout(() => {
+      start = null;
+      fibona.send("handle", "hold");
+    }, 800);
+  });
+  img.addEventListener("pointermove", (e) => {
+    if (!start) return;
+    const [dx, dy] = [e.screenX - start[0], e.screenY - start[1]];
+    if (!moved && Math.hypot(dx, dy) < 4) return;  // A tap may wobble.
+    moved = true;
+    clearTimeout(timer);
+    fibona.send("handle", "drag", dx, dy);
+  });
+  img.addEventListener("pointerup", () => {
+    clearTimeout(timer);
+    if (start) fibona.send("handle", moved ? "drop" : "tap");
+    start = null;
+  });
+</script>
+</body>
+</html>
