@@ -1,0 +1,4 @@
+/node_modules/
+/dist/
+# Copied in by npm run package.
+/electron.d.ts
