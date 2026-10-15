@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fibona</title>
+    <link rel="icon" href="icons/fibona.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="console/console.css">
+  </head>
+  <body>
+    <iframe id="session" title="Fibona's programmable page"></iframe>
+    <button id="recovery" type="button" aria-controls="console-panel" aria-expanded="true"><img src="icons/fibona.svg" width="18" height="18" alt="" draggable="false"><span id="view-label">Console</span><span aria-hidden="true">⇄</span><span id="view-target" class="sr-only">Open app</span></button>
+    <section id="console-panel" aria-label="Fibona console">
+      <header>
+        <strong><img src="icons/fibona.svg" width="24" height="24" alt="">Fibona <span>Console</span></strong>
+      </header>
+      <details id="settings" open>
+        <summary>Model settings</summary>
+        <form id="start-form">
+          <label>API base URL<input id="base-url" type="url" value="https://api.openai.com/v1" required></label>
+          <label>API key<input id="api-key" type="password" autocomplete="off" required></label>
+          <label>Model<input id="model" value="gpt-6-astra" required></label>
+        </form>
+      </details>
+      <p id="page-script-access" hidden>For webpage scripts without a debugger banner, enable <strong>Allow User Scripts</strong> in Chrome. <button id="open-script-settings" type="button">Open extension settings</button></p>
+      <section class="console" aria-label="Fibona activity">
+        <div id="log" role="log" aria-label="Agent steps and messages"></div>
+        <form id="input-form">
+          <div class="input-status"><span id="status" role="status">Connecting…</span><button id="stop" type="button" title="Reset the runtime and clear live memory" disabled>Stop</button></div>
+          <textarea id="message" aria-label="Message" rows="2" placeholder="Give Fibona a task…" spellcheck="false" disabled></textarea>
+          <div class="actions"><button id="send" type="submit" disabled>Send</button><button id="start" type="submit" form="start-form" disabled>Start</button></div>
+        </form>
+      </section>
+    </section>
+    <script src="console/console.js" type="module"></script>
+  </body>
+</html>
