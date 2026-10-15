@@ -17,19 +17,26 @@ It starts with only a tiny, general-purpose core, which we define as its "self."
 
 Try the [online demo](https://fibona.ai/fibona-agent) in your browser.
 
-### Evolving itself into a GR21 on iPhone
-
-https://github.com/user-attachments/assets/cc607d8a-8b91-4880-96ed-1d7715edcde8
+<table width="840" align="center">
+  <tr>
+    <th width="20%" align="center">iPhone GR21</th>
+    <th width="40%" align="center">Console to desktop</th>
+    <th width="40%" align="center">Trading terminal</th>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <video src="https://github.com/user-attachments/assets/30e6b458-4983-4e24-8ef9-fd18da004f81" controls></video>
+    </td>
+    <td align="center" valign="top">
+      <video src="https://github.com/user-attachments/assets/c8f12473-2f83-4b60-a80e-a63f0ade37d4" controls></video>
+    </td>
+    <td align="center" valign="top">
+      <video src="https://github.com/user-attachments/assets/81d97485-18b2-42ef-995e-0e61afb3d448" controls></video>
+    </td>
+  </tr>
+</table>
 
 [iOS source and build instructions](experiments/ios/README.md)
-
-### Evolving from a game console into a macOS-style desktop
-
-https://github.com/user-attachments/assets/f793a058-1f83-4846-afdb-7669c4d5cd54
-
-### Evolving itself into a live trading terminal
-
-https://github.com/user-attachments/assets/cd357bbc-ce2c-40fd-978d-f4e99a83e869
 
 ## Quick start
 
