@@ -2,9 +2,10 @@ import './native-bridge.js';
 import { encodeBrowserValue, decodeBrowserValue } from './browser-wire.js';
 const frame = document.getElementById('runtime'), views = new Map(), subscriptions = new Map(), calls = new Map();
 const state = {status:'Ready',active:false,waiting:false,console:true,title:'Fibona',ui:'',log:[],sessionId:crypto.randomUUID(),restore:true};
-let session, config, environment, initialized, inputWaiter, resolveReady, currentCell, initialInput, sequence = 0, logSequence = 0;
+let session, config, environment, initialized, inputWaiter, resolveReady, currentCell, booting = false, sequence = 0, logSequence = 0;
+const inputQueue = [], earlyEvents = [];
 const ready = new Promise(resolve => {resolveReady = resolve;});
-// Paths are also the keys exposed to the agent through fibona_source_code.
+// Complete packaged source, including the original bootstrap template; live program changes are in cell history.
 const sourcePaths = [
   "agent/core.js",
   "agent/bootstrap.js",
@@ -58,6 +59,7 @@ function makeClient(id,send) {
 }
 function closeClient(client) {
   client.native.close();
+  eventRequest('event-close',{clientId:client.id}).catch(console.error);
   for (const [key,item] of subscriptions) if (item.client === client) subscriptions.delete(key);
   if (inputWaiter?.client === client) {inputWaiter.reject(new Error('Fibona input view closed'));inputWaiter=undefined;update({waiting:false});}
 }
@@ -76,13 +78,49 @@ async function initialize(options) {
 async function startRun(settings,restore,text) {
   await ready;
   if (state.active) throw new Error('Fibona is already running; attach to the session or Stop first');
-  initialInput=text;config=settings;update({active:true,waiting:false,status:'Starting',restore});
+  config=settings;update({active:true,waiting:false,status:'Starting',restore});
   try {
     await browserCall('storage.local.set',[{fibona_settings:config}]);
     await refreshEnvironment();
     const saved=restore?await browserCall('storage.local.get',['fibona_boot']):{};
+    if(text!==undefined)inputQueue.push(text);
+    booting=Boolean(saved.fibona_boot?.trim());
     session.send({type:'run',sources:await sourceLoading,environment,boot:typeof saved.fibona_boot==='string'?saved.fibona_boot:''});
   } catch(error) {update({active:false,console:true,status:'Could not start'});throw error;}
+}
+async function eventRequest(command,value) {
+  const reply=await chrome.runtime.sendMessage({fibonaTarget:'browser',command,value:await encodeBrowserValue(value)});
+  if(reply.error)throw new Error(reply.error);
+}
+function deliverInput(text) {
+  const waiter=inputWaiter;inputWaiter=undefined;
+  log({type:'user',text:text+'\n'});update({waiting:false,status:'Running'});waiter.resolve(text);
+}
+async function submitTask(text) {
+  if(inputWaiter){deliverInput(text);return;}
+  if(!state.active && config?.apiKey){await startRun(config,state.restore,text);return;}
+  inputQueue.push(text);
+  if(!state.active)log({type:'output',text:'Browser request queued. Configure the model and press Start to continue.\n'});
+}
+async function eventTargets(path) {
+  const targets=[...subscriptions.values()].filter(item=>item.path===path).map(item=>({clientId:item.client.id,subscription:item.subscription}));
+  if(booting && !targets.length)return await new Promise(resolve=>earlyEvents.push({path,resolve}));
+  return targets;
+}
+async function handleBrowserEvent(event) {
+  const args=decodeBrowserValue(event.args);
+  if(event.clientId) {
+    const item=subscriptions.get(event.clientId+':'+event.subscription);
+    if(!item || item.path!==event.path)return {consumers:0};
+    item.client.send({type:'event',path:event.path,subscription:item.subscription,args});
+    return {consumers:1};
+  }
+  if(event.path==='omnibox.onInputEntered' || event.path==='commands.onCommand') {
+    update({console:true});
+    await browserCall('tabs.create',[{url:chrome.runtime.getURL('index.html')}]);
+    if(event.path==='omnibox.onInputEntered')await submitTask(String(session.native.decode(args)[0]));
+  }
+  return {consumers:0};
 }
 function askRuntime(type,data) {
   const id=++sequence;
@@ -92,6 +130,10 @@ async function dispatch(request,client) {
   const key=client.id+':'+request.subscription;
   switch(request.method) {
     case 'chrome': return await browserCall(request.path,request.args,request.callback);
+    case 'event-native': return await eventRequest('event-native',{clientId:client.id,message:request.message});
+    case 'task':
+      if(client!==session)throw new Error('Browser event tasks originate in the background REPL');
+      return await submitTask(String(request.text));
     case 'console': update({console:Boolean(request.visible)});return;
     case 'title': update({title:String(request.title)});return;
     case 'ui':
@@ -104,7 +146,7 @@ async function dispatch(request,client) {
       subscriptions.set(key,{path:request.path,subscription:request.subscription,client});return;
     case 'unsubscribe': subscriptions.delete(key);return;
     case 'input':
-      if(initialInput!==undefined){const text=initialInput;initialInput=undefined;log({type:'user',text:text+'\n'});return text;}
+      if(inputQueue.length){const text=inputQueue.shift();log({type:'user',text:text+'\n'});return text;}
       if(inputWaiter)throw new Error('Fibona is already waiting for input');
       if(request.prompt)log({type:'output',text:request.prompt+'\n'});
       update({waiting:true,status:'Waiting for input'});
@@ -129,6 +171,13 @@ addEventListener('message',event=>{
   channel.port1.onmessage=async({data})=>{
     if(data.type==='connected')resolveReady();
     else if(data.type==='native')session.native.receive(data.message);
+    else if(data.type==='event-native') {
+      eventRequest('event-native',{clientId:session.id,message:data.message}).catch(error=>session.send({type:'event-native',message:{type:'reply',id:data.message.id,error:error.message}}));
+    }
+    else if(data.type==='boot-ready') {
+      booting=false;
+      for(const event of earlyEvents.splice(0))event.resolve(eventTargets(event.path));
+    }
     else if(data.type==='request') {
       try{session.send({type:'reply',id:data.id,value:await dispatch(data,session)});}
       catch(error){session.send({type:'reply',id:data.id,error:error.message,errorName:error.name});}
@@ -165,7 +214,7 @@ async function handleView(id,message) {
   if(message.command==='frame-reset'){closeClient(view.client);view.client=makeClient(id,message=>push({type:'frame-message',message},id));return;}
   if(message.command==='input') {
     if(!inputWaiter)throw new Error('Fibona is not waiting for console input');
-    const waiter=inputWaiter;inputWaiter=undefined;log({type:'user',text:data.text+'\n'});update({waiting:false,status:'Running'});waiter.resolve(data.text);return;
+    deliverInput(data.text);return;
   }
   throw new Error('Fibona view command unavailable: '+message.command);
 }
@@ -175,7 +224,12 @@ chrome.runtime.onMessage.addListener((message,sender,reply)=>{
     if(message.command==='initialize')return await initialize(message.value);
     if(message.command==='view')return await handleView(message.value.id,message.value.message);
     if(message.command==='detach'){const view=views.get(message.value.id);if(view){views.delete(view.id);closeClient(view.client);}return;}
-    if(message.command==='event'){for(const item of subscriptions.values())if(item.path===message.value.path)item.client.send({type:'event',subscription:item.subscription,args:message.value.args});return;}
+    if(message.command==='event-targets')return await eventTargets(message.value.path);
+    if(message.command==='event')return await handleBrowserEvent(message.value);
+    if(message.command==='event-native') {
+      const client=message.value.clientId===session.id?session:views.get(message.value.clientId)?.client;
+      client?.send({type:'event-native',message:decodeBrowserValue(message.value.message)});return;
+    }
     if(message.command==='message')return await askRuntime('browser-message',message.value);
   })().then(async value=>({value:await encodeBrowserValue(value)})).catch(error=>({error:error.message,errorName:error.name})).then(reply);return true;
 });

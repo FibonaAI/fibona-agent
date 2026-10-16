@@ -40,6 +40,20 @@ The Console shows the conversation and expandable execution cells. Send follow-u
 keeping the same background session. During execution you can draft a message; send it when Fibona waits
 for input. **Start** is optional when sending the first task. **Stop** resets live memory, not just the current step.
 
+You can also type **fibona**, press **Tab**, enter a task and press **Enter** in Chrome's address bar.
+By default this opens Fibona and sends the task to the existing agent, or queues it until the model is configured
+and started. While a cell is running, browser tasks wait for its next `fibona_input` call.
+**Ctrl+Shift+Y** (**Cmd+Shift+Y** on macOS) is the suggested shortcut for `_execute_action`: it invokes
+the extension action and follows its configured tab, popup or side panel. It does not emit `commands.onCommand`.
+Chrome or another extension may already own the suggested key; check the actual binding in
+`chrome://extensions/shortcuts` or `fibona_chrome('commands.getAll')`.
+
+The separate **Custom Fibona shortcut** (`fibona-command`) is initially unbound. Assign a key in
+`chrome://extensions/shortcuts`, then ask Fibona to define its behavior through `fibona_on('commands.onCommand',callback)`.
+Without a subscriber it opens the normal Console; a subscriber takes over that default behavior.
+Save the registration in `fibona_boot` to recreate it after restart. Chrome requires commands to be declared
+in the packaged manifest; Fibona can change their handlers, but cannot add commands or assign keys at runtime.
+
 To keep an app after a full browser restart, ask Fibona to save its startup program and application data.
 Closing a view preserves the existing session; restoring after a full restart creates a new one from saved code
 and explicit state. Model conversation history and arbitrary JavaScript closures are not automatically persisted.
@@ -48,7 +62,9 @@ and explicit state. Model conversation history and arbitrary JavaScript closures
 
 This experimental extension requests broad permissions so Fibona can choose native browser capabilities at
 runtime: tabs and navigation, bookmarks and history, cookies and network access, downloads, clipboard,
-notifications, alarms, storage and debugger access. It can access HTTP and HTTPS sites. These grants allow
+notifications, alarms, storage and debugger access. `<all_urls>` enables ordinary page screenshots as well as
+network access; `activeTab` grants temporary access when you invoke the extension. File URLs still require
+Chrome's **Allow access to file URLs** setting. Restricted pages retain Chrome's native restrictions. These grants allow
 real changes to browser data and pages; use a separate Chrome profile when experimenting with unfamiliar tasks.
 The model endpoint receives the task and context selected by the running agent. Browser data is not all sent
 automatically, but Fibona can read and include relevant page content in its model calls.
@@ -93,7 +109,9 @@ const unsubscribe = await fibona_on('tabs.onCreated', tab => fibona_print(tab.id
 
 // Native Web APIs run under the extension origin, outside the opaque sandbox.
 const response = await fibona_browser('fetch', 'https://example.com');
-const text = await response.call('text');
+let text;
+try { text = await response.call('text'); }
+finally { await response.release(); }
 const directory = await fibona_browser('navigator.storage.getDirectory');
 const file = await directory.call('getFileHandle', 'note.txt', {create: true});
 const writer = await file.call('createWritable');
@@ -113,6 +131,11 @@ values, is cloned. Functions become asynchronous callbacks. `release` drops a re
 still need their own `close`, `removeEventListener`, etc. Stop tears down the entire host document.
 After unregistering an exported callback, `fibona_browser.release(callback)` releases its bridge reference.
 
+Direct `fetch` in the REPL and App uses the sandbox's opaque security origin (`Origin: null`) and obeys CORS.
+Use `fibona_browser('fetch',url,options)` for cross-origin requests covered by host permissions, then read
+and release the returned Response as above. Permissions do not change sandbox fetch. `no-cors` cannot
+provide a readable response, and changing the URL to another proxy or archive is not a CORS fix.
+
 This is asynchronous RPC. It cannot manufacture user activation or transparently execute synchronous
 callbacks such as IndexedDB upgrade transactions. Use suitable native alternatives (e.g. Chrome storage),
 a visible user action, or let the program choose another approach. Local DOM nodes/AbortSignals are not
@@ -125,6 +148,29 @@ For APIs whose completion is callback-based, use `fibona_chrome.callback(path,..
 callback, rejects `runtime.lastError`, and returns its result; if the callback has no result, it returns the
 method's synchronous value. For example, `contextMenus.create` returns its menu id only after creation
 succeeds. Promise APIs continue using the ordinary call form.
+
+Chrome event arguments can include remote functions. For example, native address-bar suggestions work
+through the same bridge; invoke the callback and release its reference after use:
+
+```javascript
+await fibona_on('omnibox.onInputChanged', async (text, suggest) => {
+  try { await suggest([{content: text, description: 'Ask Fibona: ' + text}]); }
+  finally { await suggest.release(); }
+});
+```
+
+Worker event listeners are registered synchronously at startup, so waking events are not lost after worker
+suspension. `fibona_on` accepts a path and optional callback; filter event data inside that callback.
+Native registration filters/options and synchronous blocking return values are not supported by this RPC.
+Use CDP for extra network data such as POST bodies and detach afterward; view-owned native listeners
+can also be registered through `fibona_view` and end when that view closes. Remote event callback references
+belong to the current worker and must not be saved for later sessions.
+Each subscription receives its own callback references; releasing one does not invalidate another subscriber.
+
+In the background REPL, `await fibona_on('contextMenus.onClicked')` without a callback stores events in
+`fibona_events` and queues a message pointing to the corresponding index. The active program receives it
+through `fibona_input` and decides whether to call the model. It does not interrupt a running cell.
+Keep subscriptions in saved `fibona_boot` code if they should be recreated after a full restart.
 
 Generated webpage code uses the native User Scripts API, without a debugger connection or banner:
 
@@ -146,6 +192,7 @@ bridge; `files` only loads packaged files. Adding a file does not turn it into a
 Native permissions, restricted browser pages and consent/gesture requirements still apply.
 `fibona_environment` contains actual grants, discovered event paths, the session id and `userScripts`
 availability/settings URL, refreshed before every run.
+It also includes entrypoint paths, registered commands and the omnibox keyword.
 
 ## Programmable views
 
@@ -175,6 +222,11 @@ Drag it with a mouse or touch to move it; a short click still switches views. It
 the window, including after resizing. Movement is local to the open page.
 `fibona_set_title` sets view titles. Default console input continues waiting when no view is open.
 
+Fibona can configure `action.setPopup`, open a popup window with `windows.create`, create right-click
+menus, or bind the toolbar to the side panel with `sidePanel.setPanelBehavior`. An action popup replaces
+`action.onClicked`; user-gesture requirements still apply. Prefer native bindings for gesture-dependent UI.
+Subscribe to `omnibox.onInputEntered` or `commands.onCommand` to replace their default entry behavior.
+
 View-side `fibona_view` reuses the native object bridge to access the outer page's window/DOM. Fibona can
 change the default switch's style, replace its content or remove it with ordinary DOM operations:
 
@@ -190,7 +242,14 @@ contains the console and model settings too, so avoid reading credentials or put
 
 Keep native event handling in code. An active cell may await an event and then call `fibona_call_me`;
 a completed cell's saved callback cannot schedule another cell. Program variables, context helpers and
-I/O handlers remain editable. `fibona_source_code` includes the entire host/bridge source.
+I/O handlers remain editable. Inspect their defining cells and generated App code through `fibona_history`;
+the completed bootstrap cell is recorded there too. Later definitions can supersede earlier ones, so inspect
+live variables for current values and use new cells to change behavior. Editing history records does not execute code.
+`fibona_source_code` provides the complete packaged extension source, including core, bridges, runtime,
+console, HTML/CSS, manifest and the original bootstrap template, plus reference documentation.
+Use it to understand how the whole extension is implemented. It does not track later changes to the running
+program; inspect those through cell history and live variables. Editing packaged source snapshots does not
+change the installed extension or manifest.
 
 Save startup code under `fibona_boot`, and explicit state in native storage/files. Right-click Fibona and
 choose **Open Fibona console**, or use `index.html?safe=1`, to open a separate console. It never loads

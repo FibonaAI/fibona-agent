@@ -4,6 +4,7 @@ class FibonaNativeBridge {
   constructor(send, root) {
     this.send = send;
     this.sequence = 0;
+    this.namespace = crypto.randomUUID();
     this.references = new Map([[0, { value: root }]]);
     this.identities = new WeakMap();
     this.remote = new WeakMap();
@@ -17,7 +18,7 @@ class FibonaNativeBridge {
     if (typeof value === "function" || ![Object.prototype, null, Array.prototype, Map.prototype, Set.prototype].includes(Object.getPrototypeOf(value))) {
       if (value instanceof Blob || value instanceof ArrayBuffer || ArrayBuffer.isView(value) || value instanceof Date) return { kind: "value", value };
       let id = this.identities.get(value);
-      if (id === undefined) { id = ++this.sequence; this.references.set(id, { value }); this.identities.set(value, id); }
+      if (id === undefined) { id = this.namespace + ':' + ++this.sequence; this.references.set(id, { value }); this.identities.set(value, id); }
       return { kind: "reference", id, callable: typeof value === "function" };
     }
     if (seen.has(value)) return { kind: "alias", id: seen.get(value) };
@@ -64,7 +65,7 @@ class FibonaNativeBridge {
       catch (error) { this.pending.delete(id); reject(error); }
     });
   }
-  async receive(message) {
+  async receive(message, reply = this.send) {
     if (this.closed) return;
     if (message.type === "reply") {
       const waiter = this.pending.get(message.id); if (!waiter) return;
@@ -91,11 +92,11 @@ class FibonaNativeBridge {
       value = await value;
       // A retrieved native method must retain its receiver when invoked later.
       if (message.operation === "get" && typeof value === "function") {
-        const id = ++this.sequence; this.references.set(id, { value, owner });
-        await this.send({ type: "reply", id: message.id, value: { kind: "reference", id, callable: true } });
-      } else await this.send({ type: "reply", id: message.id, value: this.encode(value) });
+        const id = this.namespace + ':' + ++this.sequence; this.references.set(id, { value, owner });
+        await reply({ type: "reply", id: message.id, value: { kind: "reference", id, callable: true } });
+      } else await reply({ type: "reply", id: message.id, value: this.encode(value) });
     } catch (error) {
-      await Promise.resolve(this.send({ type: "reply", id: message.id, error: error?.message ?? String(error), errorName: error?.name ?? "Error" })).catch(() => {});
+      await Promise.resolve(reply({ type: "reply", id: message.id, error: error?.message ?? String(error), errorName: error?.name ?? "Error" })).catch(() => {});
     }
   }
   root() {

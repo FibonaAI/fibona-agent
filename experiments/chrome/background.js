@@ -1,8 +1,37 @@
 import { invokeChromeMethod, forwardChromeEvents, getUserScriptsAccess } from './runtime/chrome-bridge.js';
 import { encodeBrowserValue, decodeBrowserValue } from './runtime/browser-wire.js';
+import './runtime/native-bridge.js';
 const viewPorts = new Map();
 let creating, resetting, generation = 0;
 const sendToRuntime = (command, value) => chrome.runtime.sendMessage({ fibonaTarget: 'runtime-host', command, value });
+const eventReferences = new Map();
+function closeEventReferences(clientId) {
+  for(const [id,item] of eventReferences)if(!clientId || item.clientId===clientId){item.bridge.close();eventReferences.delete(id);}
+}
+async function forwardEvent(path,args) {
+  try {
+    await ensureRuntime();
+    await sendToRuntime('initialize',{auto:true});
+    const reply=await sendToRuntime('event-targets',{path});
+    if(reply.error)throw new Error(reply.error);
+    const targets=decodeBrowserValue(reply.value);
+    if(!targets.length && (path==='omnibox.onInputEntered' || path==='commands.onCommand'))targets.push({});
+    for(const target of targets) {
+      // Each delivery owns its references, so one subscriber cannot release another's callback.
+      const bridge=new FibonaNativeBridge(() => {throw new Error('Chrome event callbacks accept data, not exported functions');});
+      let consumed=false;
+      try {
+        const encoded=bridge.encode(args);
+        if(bridge.references.size>1)eventReferences.set(bridge.namespace,{clientId:target.clientId,bridge});
+        const delivered=await sendToRuntime('event',{...target,path,args:await encodeBrowserValue(encoded)});
+        if(delivered.error)throw new Error(delivered.error);
+        consumed=decodeBrowserValue(delivered.value)?.consumers>0;
+      } finally {
+        if(!consumed || bridge.references.size===1){bridge.close();eventReferences.delete(bridge.namespace);}
+      }
+    }
+  } catch(error) {console.error(error);}
+}
 async function createRuntimeDocument() {
   if (creating) return await creating;
   creating = (async () => {
@@ -16,6 +45,7 @@ async function resetRuntime(options = {}) {
   if (resetting) return await resetting;
   resetting = (async () => {
     generation++;
+    closeEventReferences();
     for (const port of viewPorts.values()) { try { port.postMessage({type:'resetting'}); } catch { /* View closed. */ } }
     if (creating) await creating;
     if ((await chrome.runtime.getContexts({contextTypes:['OFFSCREEN_DOCUMENT']})).length) await chrome.offscreen.closeDocument();
@@ -48,7 +78,7 @@ chrome.runtime.onConnect.addListener(port => {
   });
 });
 
-const events = forwardChromeEvents((path,args) => sendToRuntime('event',{path,args}).catch(() => {}));
+const events = forwardChromeEvents((path,args) => forwardEvent(path,args));
 let debuggerUpdates = Promise.resolve();
 async function callChrome(path,args,callback) {
   const start = generation;
@@ -70,7 +100,17 @@ chrome.runtime.onMessage.addListener((message,sender,reply) => {
   if (message?.fibonaTarget === 'browser' && sender.url === chrome.runtime.getURL('runtime/offscreen.html')) {
     (async () => {
       if (message.command === 'reset') { resetRuntime(message.value).catch(console.error); return; }
-      if (message.command === 'environment') return {...await chrome.permissions.getAll(),events,surface:'background',userScripts:await getUserScriptsAccess()};
+      if (message.command === 'environment') return {...await chrome.permissions.getAll(),events,surface:'background',userScripts:await getUserScriptsAccess(),
+        entrypoints:{tab:'index.html',popup:'index.html?surface=popup',sidepanel:'index.html?surface=sidepanel',console:'index.html?safe=1'},
+        commands:await chrome.commands.getAll(),omniboxKeyword:chrome.runtime.getManifest().omnibox.keyword};
+      if (message.command === 'event-native') {
+        const {clientId,message:call}=decodeBrowserValue(message.value);
+        const id=String(call.reference).split(':')[0],item=eventReferences.get(id);
+        if(!item || item.clientId!==clientId)throw new Error('Fibona event reference was released or belongs to another client');
+        await item.bridge.receive(call,async reply=>sendToRuntime('event-native',{clientId,message:await encodeBrowserValue(reply)}));
+        if(item.bridge.references.size===1){item.bridge.close();eventReferences.delete(id);}return;
+      }
+      if (message.command === 'event-close') {closeEventReferences(decodeBrowserValue(message.value).clientId);return;}
       const {path,args,callback} = decodeBrowserValue(message.value); return await callChrome(path,args,callback);
     })().then(async value => ({value:await encodeBrowserValue(value)})).catch(error => ({error:error.message,errorName:error.name})).then(reply);
     return true;

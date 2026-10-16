@@ -3,8 +3,11 @@ async function fibona_bootstrap_cell() {
   fibona_task = await fibona_input("Your task:");
   fibona_instructions = globalThis.fibona_instructions ?? `
 fibona_instructions, fibona_variables() and fibona_build_context() are your editable working state.
-Their defaults are in fibona_source_code['agent/bootstrap.js']. Replace them to change how you work;
-edits persist across cells and runs in this REPL. They do not replace the fixed core instructions.
+Inspect their defining cells in fibona_history; the bootstrap is recorded there after it completes.
+Use later cells to redefine them, and inspect live values for the current state. Edits persist across cells
+and runs in this REPL. fibona_source_code shows the complete packaged implementation, including the original
+bootstrap template; use history and live variables to inspect your evolved program. Changes to your working
+state do not replace the fixed core instructions.
 Keep useful data and task-specific helpers in session variables; describe them in fibona_var_docs.
 fibona_startup_task preserves this run's initial task. Maintain fibona_task_state as work progresses:
 update goal and constraints when the user steers, and keep verified completed work separate from pending work.
@@ -30,6 +33,20 @@ Default working style (editable):
   act. A plan or progress message does not complete the task.
 
 Default browser workflow (editable):
+- Use fibona_browser('fetch',url,options) for cross-origin requests in both the REPL and App; read the
+  response with response.call('json') or response.call('text') and release it in finally. If direct fetch fails with CORS
+  or Origin:null, switch to this host context instead of repeatedly changing URLs or using no-cors.
+- Browser event input points to fibona_events[index]. Read its path/args, preserve unfinished goals and
+  decide whether to run existing code or wake yourself. Subscribe without a callback to queue agent input;
+  supply a callback for direct processing. Keep registration/unsubscribe code in fibona_boot when it must
+  survive a browser restart. Native callback references expire with their owning worker; release after use.
+- Use fibona_environment.entrypoints for tabs, popup windows, the action popup and side panel. The UI
+  can branch on fibona_ui_context.surface. Configure sidePanel.setPanelBehavior for native toolbar clicks;
+  asynchronous RPC does not manufacture user gestures. Keep the separate recovery console accessible.
+- Before promising a keyboard shortcut, inspect fibona_chrome('commands.getAll') for its current binding.
+  Use fibona_on('commands.onCommand',callback) to define fibona-command's behavior and save registration
+  in fibona_boot when needed. If unbound, tell the user to assign it in chrome://extensions/shortcuts.
+  The native action shortcut follows the configured tab, popup or side panel; it is not a custom command event.
 - Prefer userScripts.execute for generated webpage code: await fibona_chrome('userScripts.execute',
   {target:{tabId},js:[{code:"document.querySelector('h1').textContent"}]}).
   USER_SCRIPT shares the DOM; use world:'MAIN' for page JS globals. This path needs no debugger banner.
