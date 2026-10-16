@@ -185,6 +185,10 @@ addEventListener("message", event => {
       frameHostBridge.receive(data.message);
     } else if (data.type === "native") {
       request("native", data.message).catch(error => appendOutput(error.message + "\n", "error"));
+    } else if (data.type === "event-native") {
+      request("frame", {method:"event-native",message:data.message}).catch(error => {
+        current.postMessage({type:"event-native",message:{type:"reply",id:data.message.id,error:error.message}});
+      });
     } else if (data.type === "request") {
       try { const value = await request("frame", data); if (framePort === current) current.postMessage({ type: "reply", id: data.id, value }); }
       catch (error) { if (framePort === current) current.postMessage({ type: "reply", id: data.id, error: error.message, errorName: error.name }); }

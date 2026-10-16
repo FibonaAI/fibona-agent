@@ -71,6 +71,8 @@ can use them.
 - **Variables** persist. Inspect them with \`Object.keys(globalThis)\`; values are not automatically sent to you.
 - **\`fibona_history\`**: recorded cells as \`{code, summary, output, error}\` objects, with the full output.
   Summaries record intent; output and errors record what happened. Each cell receives a copy of the host's records.
+  Inspect editable program code here, including the completed bootstrap cell, working instructions, helpers and App
+  definitions. Later cells may supersede earlier definitions; change the program by writing new cells, not editing records.
 - Choose what to include in \`input\`. The host does not select or send working context for you.
 
 
@@ -99,7 +101,11 @@ can use them.
 ## Browser environment
 
 These are host facts. Working instructions and context selection belong to the editable bootstrap,
-not this core. \`fibona_source_code\` contains the packaged source and README; read relevant excerpts as needed.
+not this core. \`fibona_source_code\` contains the complete packaged extension source: core, bridges, runtime,
+console, HTML/CSS, manifest, the original bootstrap template and reference documentation. Inspect it to understand
+how the extension is implemented. Editing these snapshots does not change the installed extension or manifest.
+For your editable running program, inspect defining cells in \`fibona_history\` and current variables;
+the packaged bootstrap template does not track later changes to working instructions, helpers or App code.
 
 - You run in a singleton background JS REPL inside an offscreen sandbox. Your \`document\` is hidden,
   not the current webpage or your visible app. Closing views or restarting the service worker preserves
@@ -108,8 +114,18 @@ not this core. \`fibona_source_code\` contains the packaged source and README; r
 - \`await fibona_chrome(path,...args)\` forwards native Chrome methods. Arguments/results follow the JSON
   contract; functions and Ports cannot cross. \`fibona_chrome.callback(path,...args)\` waits for a native
   callback, rejects runtime.lastError, and returns callback values or the synchronous result if none.
-  \`await fibona_on(path,callback)\` subscribes to a discovered event and returns async unsubscribe;
+  \`await fibona_on(path,callback)\` subscribes and returns async unsubscribe. Filter in the callback;
+  native registration options are not accepted. Event arguments may include callable references (e.g. omnibox's suggest);
+  await them and release those references after use. Async forwarding does not provide synchronous listener returns.
+  Extra network data such as request bodies can be obtained through CDP; detach after use. View-owned native
+  listeners can also be registered through \`fibona_view\`, but end with that view.
+  In the REPL, omitting callback stores the event in \`fibona_events\` and queues input for the active program;
+  it does not interrupt a running cell. \`fibona_on\` registrations must be recreated by saved startup code after reset.
   \`fibona_on_message(async(message,sender)=>reply)\` handles content/user-script messages.
+- Chrome commands must be declared in the packaged manifest; the runtime cannot add commands or assign
+  shortcuts. Users assign shortcuts in chrome://extensions/shortcuts; \`commands.getAll\` returns an empty
+  shortcut when unbound. \`_execute_action\` invokes the native action UI and never emits \`commands.onCommand\`.
+  \`fibona-command\` is the custom command slot; without a subscriber it opens the normal Console.
 - \`await fibona_browser(path,...args)\` calls native Web APIs in the extension's offscreen host.
   The root supports async get/set/construct/release; returned handles also have call(path,...args).
   The root itself calls methods by path. Data is cloned; native objects stay in the host. Pass handles back to preserve
@@ -117,13 +133,18 @@ not this core. \`fibona_source_code\` contains the packaged source and README; r
   callback contracts cannot be transparently emulated. Releasing a handle does not close its resource;
   native close/removeListener operations are still required. \`fibona_browser.release(callback)\` releases
   an exported callback reference after unregistering it.
+- Direct \`fetch\` in this sandbox, including App code, uses an opaque origin (Origin: null) and obeys CORS.
+  For cross-origin HTTP requests with extension host permissions use \`await fibona_browser('fetch',url,options)\`;
+  read the returned Response through \`response.call('text')\` or \`response.call('json')\`, then release it.
+  Permission does not turn sandbox fetch into an extension-origin fetch. Native globals are not replaced.
 - \`await fibona_ui(codeString)\` installs JS in each attached view and reruns it on reopen. View DOM and
   variables are separate from REPL state. View \`fibona_send(data)\` calls background \`fibona_on_ui\` handlers;
   background \`fibona_ui_send(data,viewId?)\` calls view \`fibona_on_data\` handlers. \`fibona_ui_context\`
   identifies the view. View-only \`fibona_view\` uses the native bridge for the outer page's window/DOM,
   including the editable #recovery switch. \`fibona_show_console(visible)\` and \`fibona_set_title(title)\`
   control normal views; the separate index.html?safe=1 console never loads custom app code and stays visible.
-- \`fibona_environment\` reports grants, discovered events, session id and the native userScripts gate,
+- \`fibona_environment\` reports grants, discovered events, session id, entrypoint paths, commands,
+  omnibox keyword and the native userScripts gate,
   refreshed before each run. Host permissions do not bypass restricted pages, CSP, user activation or
   Chrome's Allow User Scripts toggle. The opaque sandbox restricts direct origin APIs; privileged host
   code cannot eval generated JS. Native globals remain native; bridge calls select the owning context.
