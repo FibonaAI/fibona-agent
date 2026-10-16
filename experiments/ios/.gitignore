@@ -1,3 +1,4 @@
-/Fibona.xcodeproj/
+/Fibona.xcodeproj/*
+!/Fibona.xcodeproj/project.pbxproj
 /Assets.xcassets/AppIcon.appiconset/icon.png
 /Assets.xcassets/Handle.imageset/handle.png

@@ -21,8 +21,8 @@ make run   # Then type the task in the app.
 This builds the app, creates and boots a simulator named `Fibona` if needed, and installs and launches the app. Console output appears in this terminal too.
 
 For a connected iPhone, run `make device TEAM=<your-development-team>`.
-This creates `Fibona.xcodeproj` from `project.pbxproj`, then uses Xcode to provision, sign, install and launch the app.
-Edit `project.pbxproj` to change the project; the generated directory is ignored by Git.
+This uses Xcode to provision, sign, install and launch the app.
+Edit `Fibona.xcodeproj` in Xcode to change the project.
 
 In the app, the console is always one tap away on the floating spiral button. Drag it to move it; hold it to reset Fibona to its first launch, deleting everything it built and the model settings. `boot.js` in the app's Documents directory runs at every launch. If `boot.js` fails to start 3 launches in a row, it is moved to `boot.failed.js` and the app starts with only the console. Every cell is appended to `history.jsonl` there, across launches; at launch the console only says how many it holds.
 
@@ -39,8 +39,10 @@ In the app, the console is always one tap away on the floating spiral button. Dr
 | `main.m` | The native shell: a JavaScriptCore context and the `native` bridge (classes, messages, blocks, delegates) |
 | `core.js` | The engine, plain JavaScript: `Mind`, `Memory`, `Slot`, `Agent` and `JSEnv`, mirroring `core/agent.py` and `core/env.py` |
 | `app.js` | The iPhone host: `ObjC` helpers, the `Console`, timers and HTTP, the bootstrap cell, boot.js and the agent's start |
+| `FBWidget.swift` | The widget's Swift-only calls for JavaScript, as `ObjC.FBWidget`: its folder and reload |
+| `widget/` | The home-screen widget extension: shows the PNGs the agent draws, by time, with tap regions |
 | `Info.plist` | Everything fixed at build time: permission usage strings and network access |
-| `project.pbxproj` | Source template for the generated Xcode project used by `make device` |
+| `Fibona.xcodeproj/project.pbxproj` | Xcode project used by `make device` and `make testflight` |
 
 ### How it differs from the Python core
 
