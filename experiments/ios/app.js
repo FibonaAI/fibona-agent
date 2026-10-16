@@ -194,7 +194,7 @@ class Console {
       status.bottomAnchor().constraintEqualToAnchor_constant_(view.keyboardLayoutGuide().topAnchor(), -8),
     ]);
     this.fieldDelegate = ObjC.delegate({
-      // Return sends, and only while a cell waits in input(); otherwise the text stays.
+      // Return sends; the field only takes text while a cell waits in input(), see setState.
       textView_shouldChangeTextInRange_replacementText_: (field, range, text) => {
         if (text !== "\n") return true;
         const message = field.text();
@@ -282,7 +282,7 @@ class Console {
     this.append(header + "\n", "cell");
     // Measured after appending, which may first clear the welcome text.
     this.currentCell = { at: this.log.textStorage().length() - header.length - 1, length: header.length };
-    this.setState(`Running · cell ${number}`);
+    this.setState(`Running · cell ${number}`, summary);
   }
 
   finishCell(result) {
@@ -295,11 +295,13 @@ class Console {
     this.setState(result.quit ? "Ended" : "Ready");
   }
 
-  setState(state) {
+  setState(state, detail = "") {
     this.state = state;
-    keepWorking(state);
+    keepWorking(state, detail);
     this.started = Date.now();
-    const placeholder = state === "Waiting for input" ? "Message Fibona…" : "Fibona is working…";
+    const waiting = state === "Waiting for input";
+    this.field.setEditable_(waiting);  // While the agent works, nothing can be typed, not only sent.
+    const placeholder = waiting ? "Message Fibona…" : "Fibona is working…";
     this.placeholder.setAttributedText_(this.styled(placeholder, "notice", 15));
   }
 
@@ -434,7 +436,16 @@ const DOCS = files.URLsForDirectory_inDomains_(9, 1)[0].path();  // Documents, u
 // agent running after the user leaves the app, its progress shown by the system; both stop when it waits for input.
 // The system may still end the task early, and a phone the user locks still keeps DOCS unreadable.
 let backgroundTask = null;  // The task, once the system starts it; true while only requested.
-function keepWorking(state) {
+let progress = { cell: 0, chunks: 0 };  // The running cell, and the chunks the model has streamed since.
+// The system expires a task whose progress stalls, or is indeterminate, so it moves with every chunk received.
+// ponytail: a run has no known length, so each cell is one step that the chunks fill without ever finishing.
+function showProgress() {
+  if (!backgroundTask?.progress) return;
+  const { cell, chunks } = progress;
+  backgroundTask.progress().setTotalUnitCount_((cell + 1) * 1000);
+  backgroundTask.progress().setCompletedUnitCount_(cell * 1000 + Math.floor((999 * chunks) / (chunks + 200)));
+}
+function keepWorking(state, detail = "") {
   const working = state !== "Waiting for input";
   ObjC.UIApplication.sharedApplication().setIdleTimerDisabled_(working);
   if (!working) {
@@ -447,6 +458,7 @@ function keepWorking(state) {
     scheduler.registerForTaskWithIdentifier_usingQueue_launchHandler_(id, null, ObjC.block("v@", (task) => {
       if (backgroundTask !== true) return task.setTaskCompletedWithSuccess_(true);  // Waiting for input already.
       backgroundTask = task;
+      showProgress();
       task.setExpirationHandler_(ObjC.block("v", () => {
         task.setTaskCompletedWithSuccess_(false);
         if (backgroundTask === task) backgroundTask = null;
@@ -455,12 +467,13 @@ function keepWorking(state) {
     if (!scheduler.submitTaskRequest_error_(ObjC.BGContinuedProcessingTaskRequest.alloc()
       .initWithIdentifier_title_subtitle_(id, "Fibona is working", state), null)) backgroundTask = null;
   }
-  // ponytail: progress counts cells, as a run has no known length; the system shows it as ever unfinished.
-  if (backgroundTask?.progress && state.startsWith("Running · cell ")) {
-    const cell = Number(state.slice("Running · cell ".length));
-    backgroundTask.progress().setTotalUnitCount_(cell + 1);
-    backgroundTask.progress().setCompletedUnitCount_(cell);
-    backgroundTask.updateTitle_subtitle_("Fibona is working", state);
+  if (state.startsWith("Running · cell ")) {
+    progress = { cell: Number(state.slice("Running · cell ".length)), chunks: 0 };
+    showProgress();
+  }
+  // The title says which cell, the subtitle what it does.
+  if (detail && backgroundTask?.updateTitle_subtitle_) {
+    backgroundTask.updateTitle_subtitle_("Fibona · " + state.replace("Running · ", ""), detail);
   }
 }
 // What the app does outside cells, so the agent can see how what it built behaves in the user's hands: prints from
@@ -516,7 +529,23 @@ let CONFIG = JSON.parse(native.keychainGet(SETTINGS) ?? "null");  // {baseURL, a
 
 // One Responses API request to CONFIG; the model is CONFIG's unless the body names
 // one. It streams, like bootstraps/terminal, so the console can show progress, and resolves to the complete response.
-function request(body) {
+// One the network drops, as when the phone locks and the app is suspended mid-stream, is sent again, up to 3 times.
+async function request(body) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await streamResponse(body);
+    } catch (e) {
+      if (!e.networkLost || attempt > 3) throw e;
+      logApp(`Model request lost (${e.message}); sending it again, attempt ${attempt + 1}.`);
+      await new Promise((done) => setTimeout(done, 2000 * attempt));
+    }
+  }
+}
+
+// NSURLErrorDomain codes for a connection that failed or dropped: timed out, cannot connect, connection lost, offline.
+const NETWORK_LOST = [-1001, -1004, -1005, -1009];
+
+function streamResponse(body) {
   return new Promise((resolve, reject) => {
     const req = ObjC.NSMutableURLRequest.requestWithURL_(ObjC.NSURL.URLWithString_(CONFIG.baseURL + "/responses"));
     req.setHTTPMethod_("POST");
@@ -551,6 +580,8 @@ function request(body) {
     };
     const delegate = ObjC.delegate({
       URLSession_dataTask_didReceiveData_: (session, task, data) => {
+        progress.chunks += 1;  // Keep-alive comments too, which arrive while the model reasons.
+        showProgress();
         pending.appendData_(data);
         const text = ObjC.NSString.alloc().initWithData_encoding_(pending, 4);
         if (text == null) return;  // Wait for the rest of a split character.
@@ -563,14 +594,21 @@ function request(body) {
       },
       URLSession_task_didCompleteWithError_: (session, task, error) => {
         const status = task.response()?.statusCode();
-        if (error) settle(reject, new Error(error.localizedDescription()));
+        if (error) {
+          const lost = Object.assign(new Error(`${error.localizedDescription()} (${error.domain()} ${error.code()})`), {
+            networkLost: error.domain() === "NSURLErrorDomain" && NETWORK_LOST.includes(error.code()),
+          });
+          settle(reject, lost);
+        }
         else if (status !== 200) settle(reject, new Error(`Model request failed: HTTP ${status}: ${raw}`));
         else settle(reject, new Error("Model stream ended without a final response."));
       },
     }, ["NSURLSessionDataDelegate"]);
-    // The session holds the delegate until its task ends.
+    // The session holds the delegate until its task ends. Without a network, the task waits for one instead of failing.
+    const config = ObjC.NSURLSessionConfiguration.defaultSessionConfiguration();
+    config.setWaitsForConnectivity_(true);
     const session = ObjC.NSURLSession.sessionWithConfiguration_delegate_delegateQueue_(
-      ObjC.NSURLSessionConfiguration.defaultSessionConfiguration(), delegate, ObjC.NSOperationQueue.mainQueue());
+      config, delegate, ObjC.NSOperationQueue.mainQueue());
     appConsole.modelStarted();
     session.dataTaskWithRequest_(req).resume();
     session.finishTasksAndInvalidate();
