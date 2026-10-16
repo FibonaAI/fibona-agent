@@ -1,5 +1,5 @@
 // !$*UTF8*$!
-// Used only by `make device`, so Xcode can register the phone, the App ID and the profile, and sign the app.
+// Used by `make device` and `make testflight` to build and sign the app.
 // The simulator build in the Makefile compiles the same files with clang directly.
 {
 	archiveVersion = 1;
@@ -13,7 +13,34 @@
 		F1B0000000000000000000A2 /* core.js in Resources */ = {isa = PBXBuildFile; fileRef = F1B0000000000000000000B2 /* core.js */; };
 		F1B0000000000000000000A3 /* app.js in Resources */ = {isa = PBXBuildFile; fileRef = F1B0000000000000000000B3 /* app.js */; };
 		F1B0000000000000000000A6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F1B0000000000000000000B6 /* Assets.xcassets */; };
+		F1B0000000000000000000A7 /* FBWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1B0000000000000000000B7 /* FBWidget.swift */; };
+		F1B0000000000000000000A8 /* Widget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1B0000000000000000000B8 /* Widget.swift */; };
+		F1B0000000000000000000A9 /* Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F1B0000000000000000000BA /* Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		F1B000000000000000000091 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F1B0000000000000000000F0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F1B0000000000000000000D5;
+			remoteInfo = Widget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		F1B0000000000000000000D3 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				F1B0000000000000000000A9 /* Widget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		F1B0000000000000000000B0 /* Fibona.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fibona.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -22,6 +49,9 @@
 		F1B0000000000000000000B3 /* app.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = app.js; sourceTree = "<group>"; };
 		F1B0000000000000000000B6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F1B0000000000000000000B5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F1B0000000000000000000B7 /* FBWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FBWidget.swift; sourceTree = "<group>"; };
+		F1B0000000000000000000B8 /* Widget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = widget/Widget.swift; sourceTree = "<group>"; };
+		F1B0000000000000000000BA /* Widget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = Widget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -29,6 +59,8 @@
 			isa = PBXGroup;
 			children = (
 				F1B0000000000000000000B1 /* main.m */,
+				F1B0000000000000000000B7 /* FBWidget.swift */,
+				F1B0000000000000000000B8 /* Widget.swift */,
 				F1B0000000000000000000B2 /* core.js */,
 				F1B0000000000000000000B3 /* app.js */,
 				F1B0000000000000000000B5 /* Info.plist */,
@@ -41,6 +73,7 @@
 			isa = PBXGroup;
 			children = (
 				F1B0000000000000000000B0 /* Fibona.app */,
+				F1B0000000000000000000BA /* Widget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -54,15 +87,33 @@
 			buildPhases = (
 				F1B0000000000000000000D1 /* Sources */,
 				F1B0000000000000000000D2 /* Resources */,
+				F1B0000000000000000000D3 /* Embed Foundation Extensions */,
+				F1B0000000000000000000D4 /* Copy Swift Sources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				F1B000000000000000000092 /* PBXTargetDependency */,
 			);
 			name = Fibona;
 			productName = Fibona;
 			productReference = F1B0000000000000000000B0 /* Fibona.app */;
 			productType = "com.apple.product-type.application";
+		};
+		F1B0000000000000000000D5 /* Widget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F1B0000000000000000000E6 /* Build configuration list for PBXNativeTarget "Widget" */;
+			buildPhases = (
+				F1B0000000000000000000D6 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Widget;
+			productName = Widget;
+			productReference = F1B0000000000000000000BA /* Widget.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -71,8 +122,18 @@
 			isa = PBXProject;
 			attributes = {
 				TargetAttributes = {
+					F1B0000000000000000000D5 = {
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
+						};
+					};
 					F1B0000000000000000000D0 = {
 						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
 							com.apple.HealthKit = {
 								enabled = 1;
 							};
@@ -97,6 +158,7 @@
 			projectRoot = "";
 			targets = (
 				F1B0000000000000000000D0 /* Fibona */,
+				F1B0000000000000000000D5 /* Widget */,
 			);
 		};
 /* End PBXProject section */
@@ -114,16 +176,54 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		F1B0000000000000000000D4 /* Copy Swift Sources */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/FBWidget.swift",
+				"$(SRCROOT)/widget/Widget.swift",
+			);
+			name = "Copy Swift Sources";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/FBWidget.swift",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Widget.swift",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# For source_code, which Copy Bundle Resources refuses Swift files for.\ncp \"$SRCROOT/FBWidget.swift\" \"$SRCROOT/widget/Widget.swift\" \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		F1B0000000000000000000D1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				F1B0000000000000000000A1 /* main.m in Sources */,
+				F1B0000000000000000000A7 /* FBWidget.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F1B0000000000000000000D6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F1B0000000000000000000A8 /* Widget.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		F1B000000000000000000092 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F1B0000000000000000000D5 /* Widget */;
+			targetProxy = F1B000000000000000000091 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		F1B0000000000000000000E2 /* Debug */ = {
@@ -151,8 +251,12 @@
 					JavaScriptCore,
 					"-framework",
 					Security,
+					"-framework",
+					BackgroundTasks,
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE)";
 				PRODUCT_NAME = Fibona;
+				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
@@ -182,8 +286,54 @@
 					JavaScriptCore,
 					"-framework",
 					Security,
+					"-framework",
+					BackgroundTasks,
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE)";
 				PRODUCT_NAME = Fibona;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		F1B0000000000000000000E7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = widget/Widget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = widget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks @executable_path/../../Frameworks";
+				OTHER_LDFLAGS = (
+					"-e",
+					_NSExtensionMain,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE).widget";
+				PRODUCT_NAME = Widget;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		F1B0000000000000000000E8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = widget/Widget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = widget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks @executable_path/../../Frameworks";
+				OTHER_LDFLAGS = (
+					"-e",
+					_NSExtensionMain,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE).widget";
+				PRODUCT_NAME = Widget;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
@@ -205,6 +355,15 @@
 			buildConfigurations = (
 				F1B0000000000000000000E3 /* Debug */,
 				F1B0000000000000000000E5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F1B0000000000000000000E6 /* Build configuration list for PBXNativeTarget "Widget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F1B0000000000000000000E7 /* Debug */,
+				F1B0000000000000000000E8 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

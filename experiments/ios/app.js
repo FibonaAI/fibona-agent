@@ -26,6 +26,9 @@ The host is source_code['app.js']; read it for details.
   freed object crashes the app, and this session with it.
 - Build interfaces with UIKit (SwiftUI is not reachable) in your own UIWindow, then hide the console with
   \`consoleWindow.setHidden_(true)\`. The user can reopen it with the floating spiral button.
+- **Home-screen widget**: Fibona's widget shows PNGs you draw into \`ObjC.FBWidget.directory()\`, named by the Unix
+  time they start showing, with optional tap regions in \`<image>.json\`; call \`ObjC.FBWidget.reload()\` after writing.
+  Its rules are in source_code['widget/Widget.swift'].
 - **Permissions and capabilities** are fixed at build time. Info.plist
   (\`ObjC.NSBundle.mainBundle().infoDictionary()\`) lists the usage strings and background modes; on a device, the
   bundle's embedded.mobileprovision lists the entitlements. Request authorization before use. Files cannot be read
@@ -275,8 +278,10 @@ class Console {
 
   addCell(number, summary) {
     if (!this.welcome && !this.log.textStorage().string().endsWith("\n\n")) this.append("\n");  // One blank line.
-    this.currentCell = { at: this.log.textStorage().length(), length: `● cell ${number} · ${summary}`.length };
-    this.append(`● cell ${number} · ${summary}\n`, "cell");
+    const header = `● cell ${number} · ${summary}`;
+    this.append(header + "\n", "cell");
+    // Measured after appending, which may first clear the welcome text.
+    this.currentCell = { at: this.log.textStorage().length() - header.length - 1, length: header.length };
     this.setState(`Running · cell ${number}`);
   }
 
@@ -292,6 +297,7 @@ class Console {
 
   setState(state) {
     this.state = state;
+    keepWorking(state);
     this.started = Date.now();
     const placeholder = state === "Waiting for input" ? "Message Fibona…" : "Fibona is working…";
     this.placeholder.setAttributedText_(this.styled(placeholder, "notice", 15));
@@ -423,9 +429,47 @@ globalThis.http = (url, { method = "GET", headers = {}, body = null } = {}) =>
 
 const files = ObjC.NSFileManager.defaultManager();
 const DOCS = files.URLsForDirectory_inDomains_(9, 1)[0].path();  // Documents, user domain.
+
+// While the agent works, the screen does not lock by itself, and from iOS 26 a continued processing task keeps the
+// agent running after the user leaves the app, its progress shown by the system; both stop when it waits for input.
+// The system may still end the task early, and a phone the user locks still keeps DOCS unreadable.
+let backgroundTask = null;  // The task, once the system starts it; true while only requested.
+function keepWorking(state) {
+  const working = state !== "Waiting for input";
+  ObjC.UIApplication.sharedApplication().setIdleTimerDisabled_(working);
+  if (!working) {
+    if (backgroundTask?.setTaskCompletedWithSuccess_) backgroundTask.setTaskCompletedWithSuccess_(true);
+    backgroundTask = null;
+  } else if (state.startsWith("Running") && !backgroundTask && ObjC.BGContinuedProcessingTaskRequest) {
+    const scheduler = ObjC.BGTaskScheduler.sharedScheduler();
+    const id = ObjC.NSBundle.mainBundle().bundleIdentifier() + ".run." + Date.now();  // Matches Info.plist's ".run.*".
+    backgroundTask = true;
+    scheduler.registerForTaskWithIdentifier_usingQueue_launchHandler_(id, null, ObjC.block("v@", (task) => {
+      if (backgroundTask !== true) return task.setTaskCompletedWithSuccess_(true);  // Waiting for input already.
+      backgroundTask = task;
+      task.setExpirationHandler_(ObjC.block("v", () => {
+        task.setTaskCompletedWithSuccess_(false);
+        if (backgroundTask === task) backgroundTask = null;
+      }));
+    }));
+    if (!scheduler.submitTaskRequest_error_(ObjC.BGContinuedProcessingTaskRequest.alloc()
+      .initWithIdentifier_title_subtitle_(id, "Fibona is working", state), null)) backgroundTask = null;
+  }
+  // ponytail: progress counts cells, as a run has no known length; the system shows it as ever unfinished.
+  if (backgroundTask?.progress && state.startsWith("Running · cell ")) {
+    const cell = Number(state.slice("Running · cell ".length));
+    backgroundTask.progress().setTotalUnitCount_(cell + 1);
+    backgroundTask.progress().setCompletedUnitCount_(cell);
+    backgroundTask.updateTitle_subtitle_("Fibona is working", state);
+  }
+}
 // What the app does outside cells, so the agent can see how what it built behaves in the user's hands: prints from
 // callbacks and timers, callback errors, and how boot.js went. Only the newest APP_LOG_LIMIT lines are kept.
 globalThis.app_log = [];
+// URLs that opened the app, newest last, such as a widget region's; main.m calls openURL with each, including the
+// one that launched it. Replace openURL to handle them as they come.
+globalThis.opened_urls = [];
+globalThis.openURL = (url) => opened_urls.push(url);
 const APP_LOG_LIMIT = 500;
 function logApp(text) {
   const time = new Date().toTimeString().slice(0, 8);
@@ -450,12 +494,20 @@ const readText = (path) => ObjC.NSString.stringWithContentsOfFile_encoding_error
 // Every cell, as history records it, kept across launches. ponytail: a cell still running when iOS ends the app is
 // lost; save it on UIApplicationWillTerminateNotification if that matters.
 const HISTORY = DOCS + "/history.jsonl";
+let unsavedCells = "";  // Lines not written yet, as while the phone is locked and DOCS is unreadable.
 function saveCell(record) {
-  if (!files.fileExistsAtPath_(HISTORY)) files.createFileAtPath_contents_attributes_(HISTORY, null, null);
-  const handle = ObjC.NSFileHandle.fileHandleForWritingAtPath_(HISTORY);
-  handle.seekToEndOfFile();
-  handle.writeData_(ObjC.send(JSON.stringify(record) + "\n", "dataUsingEncoding:", 4));
-  handle.closeFile();
+  unsavedCells += JSON.stringify(record) + "\n";
+  try {
+    if (!files.fileExistsAtPath_(HISTORY)) files.createFileAtPath_contents_attributes_(HISTORY, null, null);
+    const handle = ObjC.NSFileHandle.fileHandleForWritingAtPath_(HISTORY);
+    if (!handle) return;  // Tried again with the next cell.
+    handle.seekToEndOfFile();
+    handle.writeData_(ObjC.send(unsavedCells, "dataUsingEncoding:", 4));
+    handle.closeFile();
+    unsavedCells = "";
+  } catch (e) {
+    logApp(`Could not save to history.jsonl, kept for the next cell: ${e}`);
+  }
 }
 
 // The model settings, kept in the keychain by setup() at first launch rather than built into the app.
@@ -607,8 +659,9 @@ History summaries record intent; use cell output and errors to determine what ac
 }
 
 const BOOTSTRAP = bootstrapCell.toString().replace(/^[^{]*\{\n/, "").replace(/\}\s*$/, "").replace(/^ {2}/gm, "").trim();
-const bundled = (name) => readText(ObjC.NSBundle.mainBundle().pathForResource_ofType_(name, "js"));
-const SOURCE_CODE = { "core.js": bundled("core"), "app.js": bundled("app") };
+const bundled = (name, type = "js") => readText(ObjC.NSBundle.mainBundle().pathForResource_ofType_(name, type));
+const SOURCE_CODE = { "core.js": bundled("core"), "app.js": bundled("app"), "FBWidget.swift": bundled("FBWidget", "swift"),
+  "widget/Widget.swift": bundled("Widget", "swift") };
 const EXCLUDED_NAMES = new Set(["task", "call_me", "call_llm_api", "quit", "history", "input", "source_code"]);
 
 // --- MAIN ----------------------------------------------------------------------------------------------
@@ -634,6 +687,10 @@ const FAILURES = "fibona.bootFailures";
 // Back to the first launch: delete what the agent built and saved (files and settings), then end the process, and the
 // session with it. Permissions the user granted stay with iOS until the app is deleted. Only the user starts this.
 function resetApp() {
+  const widget = ObjC.FBWidget.directory();
+  if (widget && !files.removeItemAtPath_error_(widget, null))
+    return env.write("Reset failed: could not delete widget data. Try again.\n");
+  ObjC.FBWidget.reload();
   const library = files.URLsForDirectory_inDomains_(5, 1)[0].path();  // Library, user domain.
   for (const dir of [DOCS, library, files.temporaryDirectory().path()]) {
     for (const name of files.contentsOfDirectoryAtPath_error_(dir, null) ?? []) {

@@ -24,6 +24,15 @@
 	<array>
 		<integer>1</integer>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>fibona</string>
+			</array>
+		</dict>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<!-- Capabilities are fixed at build time, so declare them all up front; the agent asks at run time. -->
@@ -72,6 +81,7 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).task</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).run.*</string>
 	</array>
 </dict>
 </plist>
