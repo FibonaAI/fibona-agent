@@ -24,7 +24,7 @@ For a connected iPhone, run `make device TEAM=<your-development-team>`.
 This creates `Fibona.xcodeproj` from `project.pbxproj`, then uses Xcode to provision, sign, install and launch the app.
 Edit `project.pbxproj` to change the project; the generated directory is ignored by Git.
 
-In the app, the console is always one tap away on the floating spiral button. Drag it to move it; hold it to reset Fibona to its first launch, deleting everything it built and the model settings. `boot.js` in the app's Documents directory runs at every launch. If `boot.js` fails to start 3 launches in a row, it is moved to `boot.failed.js` and the app starts with only the console.
+In the app, the console is always one tap away on the floating spiral button. Drag it to move it; hold it to reset Fibona to its first launch, deleting everything it built and the model settings. `boot.js` in the app's Documents directory runs at every launch. If `boot.js` fails to start 3 launches in a row, it is moved to `boot.failed.js` and the app starts with only the console. Every cell is appended to `history.jsonl` there, across launches; at launch the console only says how many it holds.
 
 ### Limitations
 

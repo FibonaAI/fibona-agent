@@ -12,7 +12,8 @@ The host is source_code['app.js']; read it for details.
 
 - **Files** persist in \`DOCS\` (Documents); variables do not outlive the app. \`DOCS + "/boot.js"\`, if present,
   runs as a cell at every launch, before you wake: write what you build there to become it. After 3 failed
-  launches in a row it is moved to \`boot.failed.js\`.
+  launches in a row it is moved to \`boot.failed.js\`. Every cell, across launches, is a line of
+  \`DOCS + "/history.jsonl"\`, shaped like \`history\`'s records.
 - **Objective-C**: \`ObjC.UILabel\` is a class; a method call sends its selector with \`_\` for each \`:\`, as in
   \`ObjC.UILabel.alloc().initWithFrame_([0, 0, 200, 40])\`. Strings, numbers, booleans, arrays and plain objects
   convert both ways and come back as plain JS values; call methods on them with
@@ -446,6 +447,17 @@ globalThis.screenshot = () => {
 
 const readText = (path) => ObjC.NSString.stringWithContentsOfFile_encoding_error_(path, 4, null);  // null if missing
 
+// Every cell, as history records it, kept across launches. ponytail: a cell still running when iOS ends the app is
+// lost; save it on UIApplicationWillTerminateNotification if that matters.
+const HISTORY = DOCS + "/history.jsonl";
+function saveCell(record) {
+  if (!files.fileExistsAtPath_(HISTORY)) files.createFileAtPath_contents_attributes_(HISTORY, null, null);
+  const handle = ObjC.NSFileHandle.fileHandleForWritingAtPath_(HISTORY);
+  handle.seekToEndOfFile();
+  handle.writeData_(ObjC.send(JSON.stringify(record) + "\n", "dataUsingEncoding:", 4));
+  handle.closeFile();
+}
+
 // The model settings, kept in the keychain by setup() at first launch rather than built into the app.
 const SETTINGS = "model settings";  // Keychain account.
 let CONFIG = JSON.parse(native.keychainGet(SETTINGS) ?? "null");  // {baseURL, apiKey, model}
@@ -683,14 +695,23 @@ async function setup() {
 }
 
 // The agent reads each task with input(); when a run ends, a new one waits for the next message.
+let runningCell = null;  // The running cell's code and summary, for its line in HISTORY.
 async function main() {
+  const count = readText(HISTORY)?.trim().split("\n").length ?? 0;
+  if (count) env.write(`${count} cells of history from earlier launches in ${HISTORY}\n`);
   if (!CONFIG) await setup();
   await boot();
   while (true) {
     await agent.run(BOOTSTRAP, {
       env,
-      onCell: (number, summary) => appConsole.addCell(number, summary),
-      onResult: (number, result) => appConsole.finishCell(result),
+      onCell: (number, summary, code) => {
+        runningCell = { code, summary };
+        appConsole.addCell(number, summary);
+      },
+      onResult: (number, result) => {
+        saveCell({ ...runningCell, output: result.output, error: result.error });
+        appConsole.finishCell(result);
+      },
     });
     env.write("The run ended. Send a message to start a new one.\n");
   }

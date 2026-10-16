@@ -173,16 +173,10 @@ const saveCell = (output, error) => fs.appendFileSync(HISTORY, JSON.stringify({ 
 app.on("will-quit", () => runningCell && saveCell(env.capture?.join("") ?? "", "The app quit while this cell was running."));
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => app.quit());
 
-// The console picks up where the last launch left off: the newest cells of HISTORY, dimmed.
-function replayHistory() {
-  const lines = readText(HISTORY)?.trim().split("\n") ?? [];
-  // ponytail: only the newest 200 are drawn; page in older ones if anyone scrolls for them.
-  for (const line of lines.slice(-200)) {
-    try {
-      const { summary, output, error } = JSON.parse(line);
-      send("write", `● ${summary}\n${output}${error ? error + "\n" : ""}\n`, "history");
-    } catch {}  // A line cut short by a crash.
-  }
+// The console says how much history earlier launches left, without replaying it.
+function showHistory() {
+  const count = readText(HISTORY)?.trim().split("\n").length ?? 0;
+  if (count) show(`${count} cells of history from earlier launches in ${HISTORY}\n`);
 }
 const readText = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null);
 
@@ -405,7 +399,7 @@ async function main() {
     { role: "windowMenu" },
   ]));
   await createWindow();
-  replayHistory();
+  showHistory();
   if (!CONFIG) await setup();
   await boot();
   while (true) {

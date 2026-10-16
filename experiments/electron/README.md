@@ -23,7 +23,7 @@ Everything lives in the app's user data directory (`app.getPath("userData")`):
 | File | Role |
 | --- | --- |
 | `boot.js` | Written by the agent; runs at every launch, before it wakes. If it fails to start 3 launches in a row, it is moved to `boot.failed.js` and the app starts with only the console |
-| `history.jsonl` | Every cell, one line each, shaped like `history`'s records (`code`, `summary`, `output`, `error`), kept across launches with no limit. A cell still running at quit is saved with what it printed. The console shows the newest 200 at launch |
+| `history.jsonl` | Every cell, one line each, shaped like `history`'s records (`code`, `summary`, `output`, `error`), kept across launches with no limit. A cell still running at quit is saved with what it printed. At launch the console only says how many cells it holds |
 | `settings.bin` | The model settings, encrypted with the OS keychain |
 
 ### Limitations
