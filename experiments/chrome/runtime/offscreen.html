@@ -1,5 +1,6 @@
 <!doctype html>
+<!-- The host: kept open by background.js for the browser's life. The iframe is the session, where cells run. -->
 <html lang="en">
-  <head><meta charset="utf-8"><title>Fibona background runtime</title></head>
-  <body><iframe id="runtime" title="Persistent JavaScript session"></iframe><script type="module" src="runtime-host.js"></script></body>
+  <head><meta charset="utf-8"><title>Fibona host</title></head>
+  <body><iframe id="session" title="Fibona session"></iframe><script type="module" src="offscreen.js"></script></body>
 </html>

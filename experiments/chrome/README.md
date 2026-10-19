@@ -2,160 +2,130 @@
 
 [Website](https://fibona.ai)
 
-A singleton JavaScript REPL in the browser background. Fibona writes its own code and interfaces;
-a small bridge forwards native browser capabilities. Python and iOS are unchanged.
+One JavaScript session shared by Fibona tabs, popups and side panels. The agent writes its own program and App;
+small bridges provide Chrome APIs and native Web APIs. The Console is packaged code the agent does not replace.
 
 ## Run
 
-Requires Chrome 135 or later. There is no build step, Node.js dependency or local server to start.
+Requires Chrome 135 or later. No build step or local server is needed.
 
-1. Use this source directory, or extract the extension ZIP into a permanent folder. In `chrome://extensions`,
-   enable **Developer mode**, choose **Load unpacked**, and select the folder containing `manifest.json`.
-   Keep that folder in place; Chrome loads the extension from it. The ZIP itself is not loaded directly.
-2. In Fibona's extension details, enable **Allow User Scripts** (Chrome 138+). Chrome 135–137 uses
-   Developer mode instead. The console shows a settings shortcut until webpage scripts are enabled.
-3. Click Fibona and enter a Responses-compatible API base URL, key and model. For example, use
-   `https://api.openai.com/v1`; the transport appends `/responses`. Custom and local endpoints are supported.
-4. Send a task. **Enter** sends; **Shift+Enter** adds a newline. Sending also starts an idle agent.
-   Closing this page leaves the session running.
+1. In `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select this directory.
+2. Open Fibona, expand model settings, and save a Responses API base URL, API key and model. The transport appends
+   `/responses` to the URL. Local endpoints work too.
+3. Send a task in the Console. Closing the view leaves the background session alive.
 
-Model credentials are saved in extension-local storage and
-used by the packaged model transport; they are not injected into session bindings. Toolbar, tab, console
-and view switch share the existing Fibona logo.
+For generated webpage scripts, enable **Allow User Scripts** in the extension's details (Chrome 138+;
+Chrome 135–137 uses Developer mode). The error from a disabled `userScripts` call includes the settings URL.
 
-## Give Fibona a task
+The Console shows conversation output and expandable execution cells, with status and Stop beside the composer.
+Tabs initially show Console; popup and side-panel surfaces initially show App. `?mode=console` opens Console.
+Normal pages have a draggable Console/App switch outside the App frame, so replacing the App keeps it; it is ordinary
+DOM the agent can restyle or remove through `fibona_view`. Safe mode has no switch.
 
-Open the webpage or project you want to work with, then describe the result in the Console. For example:
+## When something goes wrong
 
-- "Look at this project and port its core functionality into an app here."
-- "Add a task on the original webpage, mark it complete, and read the page to verify the result."
-- "Add a clear-completed button to this app and verify that unfinished tasks are preserved."
+Fibona repairs its own code, so the user needs only three controls, each for what Fibona cannot fix by itself:
 
-Fibona can inspect tabs, operate webpages, and build its own App view. Switch between **Console** and **App**
-using the small floating button; drag it if it covers a control. The App starts as an empty workspace until
-Fibona installs an interface. Creating helper functions in the background alone does not create an App.
-The default working instructions ask Fibona to deliver and verify the actual interface when building an app.
+| Control | Where | What it does |
+| --- | --- | --- |
+| **Stop** (Esc) | Beside the composer | Ends the current task. Fibona keeps its memory (variables, App, handlers); the next message starts a new run. If the task has not stopped after 5 seconds, the button becomes **Force restart**, which discards the session. |
+| **Safe mode** | Troubleshooting, or right-click the toolbar icon → **Open Fibona in safe mode**, or `index.html?safe=1` | Restarts Fibona as it was first installed: the default startup and the default App. What Fibona built stays in storage, so ask it to fix that, then **Exit safe mode**. Nothing is deleted. |
+| **Clear all data** | Troubleshooting | Deletes everything Fibona built and saved and returns to a fresh install. Model settings are kept. |
 
-The Console shows the conversation and expandable execution cells. Send follow-up requests there while
-keeping the same background session. During execution you can draft a message; send it when Fibona waits
-for input. **Start** is optional when sending the first task. **Stop** resets live memory, not just the current step.
+Stop ends the run where it waits: in-flight model requests are aborted and `fibona_call_me`, `fibona_call_llm_api` and
+`fibona_input` reject with core's Quit. A cell stuck in synchronous code cannot be interrupted in JavaScript, which is
+what Force restart is for. Force restart, safe mode and clearing detach debugger targets tracked by this extension.
 
-To keep an app after a full browser restart, ask Fibona to save its startup program and application data.
-Closing a view preserves the existing session; restoring after a full restart creates a new one from saved code
-and explicit state. Model conversation history and arbitrary JavaScript closures are not automatically persisted.
+Safe mode also starts by itself when a saved startup fails before any of its cells succeed, unless the failure was the
+model request. For maintenance it separates the two kinds of bug: what reproduces in safe mode is in the packaged code;
+what does not is in what Fibona built. The toolbar menu entries are recreated whenever the service worker starts, and
+the `?safe=1` link works however the agent changes the toolbar.
 
-## Permissions and recovery
+Clearing removes `chrome.storage` (local, session, sync), the extension origin's localStorage, IndexedDB, Cache Storage
+and origin file system, and the browser registrations Fibona can make (user scripts, content scripts, alarms, dynamic
+and session network rules, context menus, toolbar popup, badge, title and side-panel behavior), while no session is
+running; a fresh session then starts. Removing the extension removes everything, model settings included.
 
-This experimental extension requests broad permissions so Fibona can choose native browser capabilities at
-runtime: tabs and navigation, bookmarks and history, cookies and network access, downloads, clipboard,
-notifications, alarms, storage and debugger access. It can access HTTP and HTTPS sites. These grants allow
-real changes to browser data and pages; use a separate Chrome profile when experimenting with unfamiliar tasks.
-The model endpoint receives the task and context selected by the running agent. Browser data is not all sent
-automatically, but Fibona can read and include relevant page content in its model calls.
+Model settings live in extension-local storage. The model transport reads them; it does not inject the key into
+session bindings. The agent has storage access, so it must still avoid reading or exposing credentials unnecessarily.
 
-If webpage scripts are disabled, use **Open extension settings** in the Console and enable **Allow User Scripts**.
-If the App is broken or its switch has been removed, right-click the extension icon and choose
-**Open Fibona console**. This separate Console remains available without running custom App code.
-If saved startup code fails, the runtime resets and bypasses it for the next manual start.
+## Startup and persistence
 
-After changing extension source, use **Reload** on `chrome://extensions` and refresh open Fibona pages.
-This discards the live REPL. Save important app data and startup code first. Updated bootstrap defaults apply
-to a fresh session; an existing session retains its edited working instructions and context helpers.
+There are two independent startup programs:
 
-## One runtime, multiple views
+| Program | Default | Override in `chrome.storage.local` |
+| --- | --- | --- |
+| Agent | `agent/bootstrap.js` | `fibona_boot` string |
+| App in each view | `app/bootstrap.js` | `fibona_app` string |
 
-`background.js` creates one `runtime/offscreen.html`. Its sandbox iframe owns the JS heap and agent. Console tabs,
-popups and side panels attach to this same runtime. UI-local DOM is rebuilt on reopen; REPL variables,
-history, pending input/model calls and callbacks remain alive. The service worker can suspend/restart
-without destroying them. Event listeners are discovered and registered when the worker loads.
+An override replaces the entire default program. Removing its key restores the default. The agent startup is the
+bootstrap cell of each run, read when the run starts. The default waits for the user's task, sets up the working
+instructions and context helpers, and wakes the model; while it waits, the Console marks the cell "waiting for your
+message". A failing startup cell goes to core's recovery cell; if
+that fails too, the next run starts in safe mode. The App runs in each view before the session or model is ready and
+reloads when its key changes; an empty string renders nothing.
 
-**Stop** destroys the whole offscreen document and creates a fresh session, including native browser
-objects and callbacks. Owned debugger connections are detached. Explicit browser registrations and
-persistent application data remain. Browser shutdown, extension reload/update or a renderer crash loses
-live JS memory. Saved startup code and explicit stored state restore a fresh runtime, not arbitrary closures.
-The runtime starts at extension install/load and browser startup, or on first attachment. Saved
-`chrome.storage.local.fibona_boot` runs once per new runtime when model settings are available.
+The toolbar button, the shortcut and the `fibona` omnibox keyword open Fibona by default. When the session subscribes
+to `action.onClicked`, `commands.onCommand` or `omnibox.onInputEntered`, its callback replaces that default.
 
-Timers remain subject to browser throttling/device sleep. Use native alarms where appropriate. Offscreen
-reasons used here have no inactivity timeout, but Chrome can still terminate a renderer.
-[Offscreen API](https://developer.chrome.com/docs/extensions/reference/api/offscreen),
-[service worker lifecycle](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle).
+The host does not persist execution history, variables, event handlers or application data. The agent chooses
+what to save in Chrome storage or the extension origin's file system, and how its startup program restores it.
+`fibona_history` contains the current run's finished cells and `fibona_previous_history` the last run's;
+`fibona_app_log` contains recent App and callback diagnostics.
+Console logs and session globals remain in memory while the offscreen document lives.
 
-## Native capability bridge
+Force restart, browser shutdown, extension reload and renderer termination discard live memory. A service-worker
+restart does not discard the offscreen session. Timers remain subject to browser throttling.
 
-The host does not maintain capability-specific tools, wrappers or a browser API manual.
-Fibona can consult native documentation and build its own helpers in the REPL.
+## Native APIs
 
 ```javascript
-// Native Chrome methods and events.
 const tabs = await fibona_chrome('tabs.query', {});
 const unsubscribe = await fibona_on('tabs.onCreated', tab => fibona_print(tab.id));
 
-// Native Web APIs run under the extension origin, outside the opaque sandbox.
 const response = await fibona_browser('fetch', 'https://example.com');
 const text = await response.call('text');
-const directory = await fibona_browser('navigator.storage.getDirectory');
-const file = await directory.call('getFileHandle', 'note.txt', {create: true});
+await response.release();
+
+const root = await fibona_browser('navigator.storage.getDirectory');
+const file = await root.call('getFileHandle', 'note.txt', {create: true});
 const writer = await file.call('createWritable');
 await writer.call('write', text);
 await writer.call('close');
-
-// Callbacks are remote references too; native locks retain native scheduling.
-await fibona_browser('navigator.locks.request', 'fibona-task', async lock => {
-  fibona_print(await lock.get('name'));
-});
 ```
 
-`fibona_browser.get(path)`, `.set(path,value)` and `.construct(path,...args)` access native properties and
-constructors. Returned handles have `get`, `set`, `call`, `construct` and `release`; native methods retain
-their receiver. Pass handles back as arguments to preserve native object identity. Data, including binary
-values, is cloned. Functions become asynchronous callbacks. `release` drops a reference; native resources
-still need their own `close`, `removeEventListener`, etc. Stop tears down the entire host document.
-After unregistering an exported callback, `fibona_browser.release(callback)` releases its bridge reference.
+`fibona_chrome(path, ...args)` invokes a Chrome method in the service worker. Arguments are copied data, not functions.
+`.callback(path, ...args)` appends a callback, checks `runtime.lastError` and resolves to its callback result.
+`fibona_on(eventPath, callback)` returns an async unsubscribe. Function arguments such as `sendResponse` cross as async
+references, so a message listener can call them and release them afterward.
 
-This is asynchronous RPC. It cannot manufacture user activation or transparently execute synchronous
-callbacks such as IndexedDB upgrade transactions. Use suitable native alternatives (e.g. Chrome storage),
-a visible user action, or let the program choose another approach. Local DOM nodes/AbortSignals are not
-host objects; construct origin-bound objects through the bridge. Privileged host code obeys MV3 CSP and
-cannot eval generated JavaScript. The sandbox can dynamically load libraries under its own CSP/CORS rules.
+`fibona_browser` invokes Web APIs in the offscreen document under the extension origin. Its `get`, `set` and `construct`
+operations access properties and constructors. Returned native objects support `get`, `set`, `call`, `construct` and
+`release`. Functions cross as asynchronous callbacks; native methods retain their receiver. Passing a reference back
+preserves the native object's identity. Data is copied, including binary values. Release bridge references when finished;
+resources may also need their own `close` or `removeEventListener` calls.
 
-`fibona_chrome` arguments follow Chrome's JSON contract, without function/Port handles. For native Chrome
-events use `fibona_on`; `fibona_on_message` supplies async replies to content/user-script messages.
-For APIs whose completion is callback-based, use `fibona_chrome.callback(path,...args)`. It appends a native
-callback, rejects `runtime.lastError`, and returns its result; if the callback has no result, it returns the
-method's synchronous value. For example, `contextMenus.create` returns its menu id only after creation
-succeeds. Promise APIs continue using the ordinary call form.
+This is asynchronous RPC: it does not provide user activation or synchronous callbacks such as IndexedDB upgrades.
+Use native alternatives or an actual visible user action where required. The sandbox can eval generated cells; privileged
+extension pages obey MV3 CSP and cannot eval generated code. Native permissions and restricted pages still apply.
 
-Generated webpage code uses the native User Scripts API, without a debugger connection or banner:
+Generated webpage code can use `userScripts.execute` without a debugger banner:
 
 ```javascript
-const [{result}] = await fibona_chrome('userScripts.execute', {
+const results = await fibona_chrome('userScripts.execute', {
   target: {tabId},
-  js: [{code: "document.querySelector('h1').textContent = 'Changed by Fibona'"}],
+  js: [{code: "document.querySelector('h1').textContent"}],
 });
 ```
 
-The default `USER_SCRIPT` world shares the DOM and isolates script globals. Use `world:'MAIN'` when code
-needs the page's own JavaScript globals. Async script results are awaited. Configure native user-script
-messaging with `userScripts.configureWorld({messaging:true})` when needed.
+## App programs
 
-User-script execution requires Chrome's **Allow User Scripts** toggle (138+, Developer mode on 135–137).
-Manifest permissions cannot switch it on. Disabled calls report the exact settings URL and action, and can
-be retried after enabling it. `scripting.executeScript` cannot accept a function string through this JSON
-bridge; `files` only loads packaged files. Adding a file does not turn it into a general CSP-free evaluator.
-Native permissions, restricted browser pages and consent/gesture requirements still apply.
-`fibona_environment` contains actual grants, discovered event paths, the session id and `userScripts`
-availability/settings URL, refreshed before every run.
-
-## Programmable views
-
-The REPL's `document` is hidden. `fibona_ui(codeString)` installs ordinary JavaScript in each visible view.
-It owns the whole view DOM/CSS/Canvas and can load libraries; there is no fixed interface schema.
+Register session handlers before installing an App that depends on them:
 
 ```javascript
 fibona_count = 0;
 fibona_on_ui(data => ({count: data.increment ? ++fibona_count : fibona_count}));
-await fibona_ui(`
+await fibona_chrome('storage.local.set', {fibona_app: `
   document.body.innerHTML = '<button id="counter">Count</button>';
   const render = async increment => {
     const state = await fibona_send({increment});
@@ -163,68 +133,45 @@ await fibona_ui(`
   };
   document.getElementById('counter').onclick = () => render(true);
   await render(false);
-`);
-await fibona_show_console(false);
+`});
 ```
 
-`fibona_ui_send(data,viewId?)` pushes data to view-side `fibona_on_data(callback)` handlers.
-View code should send a ready message to obtain current background state after mounting.
-`fibona_ui_context` describes id, URL and surface. `index.html?surface=popup` and `?surface=sidepanel` use
-the same runtime. The default switch shows current **Console/App** and **Open app/Open console**.
-Drag it with a mouse or touch to move it; a short click still switches views. Its position stays within
-the window, including after resizing. Movement is local to the open page.
-`fibona_set_title` sets view titles. Default console input continues waiting when no view is open.
+App programs run in their own sandboxed iframe with DOM access. `fibona_send(data)` calls the session's `fibona_on_ui`
+handlers; `fibona_ui_send(data, viewId?)` sends data back to App `fibona_on_data(callback)` handlers. `fibona_ui_context`
+describes the current view. Apps render independently and should handle unavailable session handlers themselves.
 
-View-side `fibona_view` reuses the native object bridge to access the outer page's window/DOM. Fibona can
-change the default switch's style, replace its content or remove it with ordinary DOM operations:
+App `fibona_show_console(visible)` switches the current view. `fibona_chrome` reaches Chrome methods;
+`fibona_view` provides the same native-object bridge to the outer extension page, including its DOM. Put outer-page
+changes in App startup to repeat them on reopen. The outer page includes Console settings; do not expose credentials.
+Safe mode loads no App and is unaffected by these edits. To customize the switch:
 
 ```javascript
-// Inside the code passed to fibona_ui(...).
-const button = await fibona_view('document.getElementById', 'recovery');
-await button.set('style.background', '#333333');
-await button.call('remove');
+// In the App program. Use ordinary native DOM methods to restyle it or remove it deliberately.
+const toggle = await fibona_view('document.getElementById', 'view-switch');
+if (toggle) await toggle.set('style.borderRadius', '12px');
 ```
 
-These edits affect the current page. Put them in the UI program to apply again on reopen. The outer page
-contains the console and model settings too, so avoid reading credentials or putting them in model context.
+A removed switch returns when the page reopens, and the saved App can reapply its changes.
 
-Keep native event handling in code. An active cell may await an event and then call `fibona_call_me`;
-a completed cell's saved callback cannot schedule another cell. Program variables, context helpers and
-I/O handlers remain editable. `fibona_source_code` includes the entire host/bridge source.
+## Source layout
 
-Save startup code under `fibona_boot`, and explicit state in native storage/files. Right-click Fibona and
-choose **Open Fibona console**, or use `index.html?safe=1`, to open a separate console. It never loads
-custom App code, has no floating switch, and stays visible even when the REPL hides normal consoles.
-On a fresh runtime this suppresses automatic boot; on an existing one it attaches without replacing live state. Startup
-exceptions reset the runtime and bypass boot for the next manual start.
+- `agent/core.js`: platform-independent Mind, Memory, Slot, Agent and JSEnv, prefixed `fibona_` to avoid browser
+  globals. No App or persistence policy lives here.
+- `agent/bootstrap.js`: the default agent startup: working instructions, `fibona_variables()` and
+  `fibona_build_context()`, all editable session state.
+  `app/bootstrap.js` supplies the editable default visible App.
+- `runtime/session.js`: the Chrome prompt, session bindings, Stop and startup (`fibona_boot` or the default bootstrap,
+  safe mode). `fibona_source_code` exposes packaged text sources and the manifest, distinct from live cells and storage
+  overrides.
+- `runtime/offscreen.js`: model transport, native Web API bridge and shared in-memory Console log.
+- `background.js`: offscreen lifecycle and restarts, clearing, generic Chrome calls, event forwarding across worker
+  restarts and the default actions of the toolbar button, shortcut and omnibox. `webRequest.*` listeners are added only while subscribed, so
+  ordinary browsing does not wake the worker.
+- `runtime/channel.js`, `native-bridge.js`, `browser-wire.js`: request/reply and value transport.
+- `console/`, `app/frame.*`, `index.html`: protected Console and independent App frame.
 
-## Files and checks
+This experimental extension requests broad browser permissions so the agent can operate pages and browser data.
+The model receives the context selected by the running program, rather than an automatic dump of browser state.
 
-| Location | Responsibility |
-| --- | --- |
-| `agent/` | Mind/Memory/Agent/JSEnv, fixed core instructions and editable bootstrap |
-| `runtime/` | Persistent session, sandbox endpoint and generic browser bridges |
-| `console/` | Protected console and programmable view connection |
-| `background.js` | Extension lifecycle, Chrome method calls and event forwarding |
-| `index.html`, `manifest.json`, `icons/` | Extension entry points and shared logo |
-
-The console shows agent steps, progress, messages and errors. Each step keeps its complete code behind
-**Code**, including a cell that quits. The runtime status and **Stop** sit immediately above the message
-input so they remain visible while you read the conversation. Body text is 16px, code and secondary text are 14px.
-Model transport details and native bridge traffic are not part of this view.
-
-The prompt follows the original Fibona design. `agent/core.js` defines the fixed self, execution protocol
-and browser host facts. `agent/bootstrap.js` supplies editable working instructions, browser workflow,
-task state and context helpers. These working instructions enter each wake through `fibona_build_context()`;
-changing them does not replace the core. Edits to `fibona_instructions`, `fibona_variables` and
-`fibona_build_context` survive subsequent runs in the same REPL; save startup code to restore them after reset.
-
-Send a message to start an idle agent or continue after a run ends, reusing the same REPL. During a run,
-you can draft a message and send when the agent requests input. **Start** opens a run without an initial
-message; **Stop** resets the runtime. Saved startup restoration is handled by the runtime, with recovery
-bypassing it automatically. Production scripts are packaged; store distribution is unreviewed.
-
-The runtime files are loaded directly by Chrome; there is no bundling step. A distributable development ZIP
-contains `manifest.json`, `background.js`, `index.html`, `agent/`, `runtime/`, `console/`, `icons/`, this README
-and the project license. Keep development tooling, test code, local profiles and credentials out of the ZIP.
-This is an unpacked experimental extension; no Chrome Web Store listing or signed CRX is provided.
+[Offscreen API](https://developer.chrome.com/docs/extensions/reference/api/offscreen) ·
+[Service-worker lifecycle](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle)

@@ -1,228 +1,451 @@
-// A visible view attaches to the singleton background REPL. Closing this page never stops that REPL.
+// A Fibona view (index.html in a tab, popup or side panel): the packaged Console and the agent's App, which start
+// independently of the session. The Console attaches to the host in the offscreen document for the shared log and
+// status, and sends the user's messages, Stop and Troubleshooting actions. The App runs in a sandboxed iframe
+// (app/frame.js) with chrome.* and this page's objects reachable through the bridges below.
 import { encodeBrowserValue, decodeBrowserValue } from "../runtime/browser-wire.js";
+import "../runtime/channel.js";
 import "../runtime/native-bridge.js";
-import { ConsoleActivity } from "./console-activity.js";
-import { getUserScriptsAccess } from "../runtime/chrome-bridge.js";
-const elements = Object.fromEntries(["status", "settings", "start-form", "base-url", "api-key", "model", "start", "log", "input-form", "message", "send", "stop", "session", "console-panel", "recovery", "view-label", "view-target", "page-script-access", "open-script-settings"].map(id => [id, document.getElementById(id)]));
-const activity = new ConsoleActivity(elements.log);
-const parameters = new URL(location.href).searchParams;
-const safeMode = parameters.get("safe") === "1";
-const surface = parameters.get("surface") ?? "tab";
-document.body.dataset.surface = surface;
-let port, sequence = 0, framePort, frameHostBridge, frameReady = false, viewRevision = 0, viewInfo, environment, sessionId, appCode = "";
-let state = { active: false, waiting: false, console: true, status: "Connecting…" }, resetting = Promise.resolve();
-const pending = new Map(), queuedData = [];
-let switchDrag, suppressSwitchClick = false;
 
-async function refreshPageScriptAccess() {
-  const access = await getUserScriptsAccess();
-  elements["page-script-access"].hidden = access.available;
-  elements["open-script-settings"].title = access.message ?? "Webpage scripts enabled";
+const elements = Object.fromEntries(["status", "settings", "settings-form", "base-url", "api-key", "model", "save-settings", "settings-status", "troubleshooting-status", "log", "input-form", "message", "send", "stop", "app", "console-panel", "safe-notice", "safe-reason", "exit-safe", "enter-safe", "clear-all"].map(id => [id, document.getElementById(id)]));
+const params = new URL(location.href).searchParams;
+// Safe mode: chrome.storage.local fibona_safe_mode, set by the user or by the session after a failed saved startup.
+// index.html?safe=1 is the link that always reaches it, even if the agent changed the toolbar and menus.
+const safeLink = params.get("safe") === "1";
+const safeState = (await chrome.storage.local.get("fibona_safe_mode")).fibona_safe_mode;
+const safeMode = safeLink || Boolean(safeState);
+const surface = params.get("surface") ?? "tab";
+const context = { id: crypto.randomUUID(), surface, url: location.href };  // fibona_ui_context in the App.
+const activities = new Map();
+const pendingAppLogs = [];
+const pendingAppData = [];
+let host, hostPort, connecting, reconnectTimer, connectionRevision = 0, restarting = false;
+let appChannel, appPort, appBridge, appRevision = 0, appCode = "", appReady = false;
+let savedSettings, submitting = false;
+// The Console/App switch: an ordinary page element the App may restyle or remove through fibona_view.
+const viewSwitch = document.getElementById("view-switch");
+let switchDrag, switchDragged = false;
+
+async function backgroundRequest(type, params = {}) {
+  const reply = await chrome.runtime.sendMessage({ to: "background", type, params: await encodeBrowserValue(params) });
+  if (!reply) throw new Error("Fibona: background did not reply");
+  if (reply.error !== undefined) throw Object.assign(new Error(reply.error), { name: reply.errorName ?? "Error" });
+  return decodeBrowserValue(reply.value);
 }
-elements["open-script-settings"].addEventListener("click", () => chrome.tabs.create({url:"chrome://extensions/?id="+chrome.runtime.id}));
-addEventListener("focus", refreshPageScriptAccess);
+
+function showConsole(visible = true) {
+  visible = safeMode || Boolean(visible);
+  document.documentElement.dataset.view = visible ? "console" : "app";
+  elements["console-panel"].hidden = !visible;
+  elements.app.hidden = visible;
+  if (viewSwitch?.isConnected) {
+    const label = viewSwitch.querySelector("#view-label");
+    if (label) label.textContent = visible ? "Console" : "App";
+    viewSwitch.setAttribute("aria-expanded", String(visible));
+    viewSwitch.title = `Viewing ${visible ? "Console" : "App"}. Open ${visible ? "App" : "Console"}. Drag to move.`;
+    viewSwitch.setAttribute("aria-label", visible ? "Open App" : "Open Console");
+    if (viewSwitch.style.left) positionViewSwitch(parseFloat(viewSwitch.style.left), parseFloat(viewSwitch.style.top));
+  }
+  if (visible && document.activeElement !== viewSwitch) elements.message.focus({ preventScroll: true });
+}
 
 function positionViewSwitch(left, top) {
-  const button = elements.recovery;
-  const { width, height } = button.getBoundingClientRect();
-  Object.assign(button.style, {
-    left: Math.max(8, Math.min(left, innerWidth - width - 8)) + "px",
-    top: Math.max(8, Math.min(top, innerHeight - height - 8)) + "px",
+  if (!viewSwitch?.isConnected) return;
+  const bounds = viewSwitch.getBoundingClientRect();
+  Object.assign(viewSwitch.style, {
+    left: Math.max(8, Math.min(left, innerWidth - bounds.width - 8)) + "px",
+    top: Math.max(8, Math.min(top, innerHeight - bounds.height - 8)) + "px",
     right: "auto", bottom: "auto",
   });
 }
-function constrainViewSwitch() {
-  if (elements.recovery.style.left) positionViewSwitch(parseFloat(elements.recovery.style.left), parseFloat(elements.recovery.style.top));
-}
-elements.recovery.addEventListener("pointerdown", event => {
-  if (!event.isPrimary || event.button !== 0) return;
-  elements.recovery.dataset.dragging = "true";
-  document.body.classList.add("moving-switch");
-  const rect = elements.recovery.getBoundingClientRect();
-  switchDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
-  suppressSwitchClick = false;
-  elements.recovery.setPointerCapture(event.pointerId);
-});
-elements.recovery.addEventListener("pointermove", event => {
-  if (switchDrag?.id !== event.pointerId) return;
-  const dx = event.clientX - switchDrag.x, dy = event.clientY - switchDrag.y;
-  if (!suppressSwitchClick && Math.hypot(dx, dy) < 5) return;
-  suppressSwitchClick = true;
-  positionViewSwitch(switchDrag.left + dx, switchDrag.top + dy);
-});
-elements.recovery.addEventListener("lostpointercapture", () => {
-  switchDrag = undefined;
-  delete elements.recovery.dataset.dragging;
-  document.body.classList.remove("moving-switch");
-});
-addEventListener("resize", constrainViewSwitch);
 
-async function request(command, value = {}) {
-  const id = ++sequence, encoded = await encodeBrowserValue(value);
-  return await new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    try { port.postMessage({ id, command, value: encoded }); }
-    catch (error) { pending.delete(id); reject(error); }
+function finishViewSwitchDrag(event) {
+  if (event.pointerId !== switchDrag?.id) return;
+  switchDrag = undefined;
+  document.body.classList.remove("dragging-view-switch");
+}
+
+if (safeMode) viewSwitch?.remove();
+else if (viewSwitch) {
+  viewSwitch.hidden = false;
+  viewSwitch.addEventListener("pointerdown", event => {
+    if (!event.isPrimary || event.button !== 0) return;
+    const bounds = viewSwitch.getBoundingClientRect();
+    switchDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: bounds.left, top: bounds.top };
+    switchDragged = false;
+    document.body.classList.add("dragging-view-switch");
+    viewSwitch.setPointerCapture(event.pointerId);
+  });
+  viewSwitch.addEventListener("pointermove", event => {
+    if (event.pointerId !== switchDrag?.id) return;
+    const dx = event.clientX - switchDrag.x, dy = event.clientY - switchDrag.y;
+    if (!switchDragged && Math.hypot(dx, dy) < 5) return;
+    switchDragged = true;
+    positionViewSwitch(switchDrag.left + dx, switchDrag.top + dy);
+  });
+  viewSwitch.addEventListener("lostpointercapture", finishViewSwitchDrag);
+  addEventListener("pointerup", finishViewSwitchDrag);
+  addEventListener("pointercancel", finishViewSwitchDrag);
+  viewSwitch.addEventListener("click", event => {
+    if (event.detail && switchDragged) { switchDragged = false; return; }
+    showConsole(document.documentElement.dataset.view !== "console");
+  });
+  addEventListener("resize", () => {
+    if (viewSwitch.isConnected && viewSwitch.style.left) {
+      positionViewSwitch(parseFloat(viewSwitch.style.left), parseFloat(viewSwitch.style.top));
+    }
   });
 }
-function showConsole(visible) {
-  visible = safeMode || visible;
-  elements["console-panel"].hidden = !visible;
-  elements.recovery.setAttribute("aria-expanded", String(Boolean(visible)));
-  elements["view-label"].textContent = visible ? "Console" : "App";
-  elements["view-target"].textContent = visible ? "Open app" : "Open console";
-  elements.recovery.title = (visible ? "Viewing console. Switch to the app." : "Viewing app. Switch to the console.") + " Drag to move.";
-  constrainViewSwitch();
+
+// Stop ends the current task and keeps the session. A cell that never waits cannot be stopped, and one stuck in a
+// synchronous loop cannot even answer; if the run has not ended FORCE_AFTER after Stop, the button becomes Force
+// restart, which discards the session.
+const FORCE_AFTER = 5000;
+let lastStatus = { state: "Connecting…", running: false }, forceTimer, forceOffered = false;
+const runEnded = () => !lastStatus.running && lastStatus.state !== "Stopping";
+
+function updateControls() {
+  elements.send.disabled = !host || restarting || submitting;
+  elements.stop.disabled = restarting || !(forceOffered || lastStatus.running);
+  elements.stop.textContent = forceOffered ? "Force restart" : "Stop";
+  elements.stop.classList.toggle("force", forceOffered);
+  elements.stop.title = forceOffered ? "Fibona is not responding. Restart it; unsaved memory is lost."
+    : "Stop the current task (Esc). Fibona keeps its memory.";
+  for (const id of ["enter-safe", "exit-safe", "clear-all"]) elements[id].disabled = restarting;
 }
-function applyState(values) {
-  const follow = elements.log.scrollHeight - elements.log.scrollTop - elements.log.clientHeight < 40;
-  Object.assign(state, values);
-  elements.status.textContent = state.status;
-  elements.start.disabled = state.active || !viewInfo || state.status === "Stopping…";
-  elements.stop.disabled = !viewInfo || state.status === "Stopping…";
-  elements.message.disabled = !viewInfo;
-  elements.send.disabled = !viewInfo || (state.active && !state.waiting);
-  elements.message.placeholder = state.active && !state.waiting ? "Fibona is working… You can draft a message." : "Give Fibona a task…";
-  if (state.active) elements.settings.open = false;
-  if (state.status === "Stopped") elements.settings.open = true;
-  if (state.status.startsWith("Startup failed")) elements.settings.open = true;
-  elements.start.hidden = state.active;
-  if ("console" in values) showConsole(safeMode ? true : state.console);
-  if ("title" in values) document.title = state.title;
+
+function showStatus(status) {
+  lastStatus = status;
+  if (runEnded()) {
+    clearTimeout(forceTimer);
+    forceTimer = undefined;
+    forceOffered = false;
+  }
+  elements.status.textContent = restarting ? "Restarting…" : status.state === "Stopping" ? "Stopping…"
+    : status.thinking ? "Thinking…" : status.state;
+  updateControls();
+}
+
+function appendActivity(item) {
+  // Model calls may return no prose after scheduling a cell. Keep whitespace in the execution record,
+  // but do not render an empty assistant message (including when replaying an older host snapshot).
+  if (item.type === "text" && !item.text.trim()) return;
+  const follow = elements.log.scrollHeight - elements.log.scrollTop - elements.log.clientHeight < 48;
+  let activity = activities.get(item.id);
+  if (!activity) {
+    const node = document.createElement("article");
+    node.className = "activity " + item.type;
+    if (item.type === "cell") {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      const title = document.createElement("span");
+      const status = document.createElement("span");
+      status.className = "cell-status";
+      const code = document.createElement("pre");
+      const error = document.createElement("pre");
+      error.className = "cell-error";
+      summary.append(title, status);
+      details.append(summary, code, error);
+      node.append(details);
+      activity = { node, title, status, code, error };
+    } else {
+      const label = document.createElement("div");
+      label.className = "message-label";
+      label.textContent = item.type === "user" ? "You" : item.source === "app" ? "App" : "Fibona";
+      const text = document.createElement("pre");
+      node.append(label, text);
+      activity = { node, text };
+    }
+    activities.set(item.id, activity);
+    elements.log.append(node);
+  }
+  if (item.type === "cell") {
+    activity.title.textContent = `Cell ${item.number} · ${item.summary || "JavaScript"}`;
+    activity.status.textContent = item.status === "waiting" ? "waiting for your message" : item.status;
+    activity.status.dataset.status = item.status;
+    activity.code.textContent = item.code;
+    activity.error.textContent = item.error || "";
+  } else {
+    activity.text.textContent = item.text.replace(/\n+$/, "");
+    activity.node.classList.toggle("error", item.level === "error");
+    activity.node.classList.toggle("warning", item.level === "warn");
+  }
+  // Match the host's bounded conversation, including local connection errors.
+  while (activities.size > 2000) {
+    const [id, first] = activities.entries().next().value;
+    first.node.remove();
+    activities.delete(id);
+  }
   if (follow) elements.log.scrollTop = elements.log.scrollHeight;
 }
-function appendOutput(text, className = "") {
-  activity.appendLocal(text, className);
+
+function showError(error) {
+  appendActivity({ id: crypto.randomUUID(), type: "text", source: "app", level: "error", text: error?.message ?? String(error) });
 }
-function appendLog(item) {
-  activity.update(item);
-}
-async function recoverConsoleState(error) {
-  try { applyState(await request("state")); }
-  catch (failure) { appendOutput(failure.message + "\n", "error"); }
-  showConsole(true);
-  appendOutput(error.message + "\n", "error");
-}
-function resetView(code) {
-  appCode = code;
-  if (safeMode) { elements.session.hidden = true; elements.session.setAttribute("aria-busy", "false"); return; }
-  const revision = ++viewRevision;
-  frameReady = false; queuedData.length = 0;
-  elements.session.setAttribute("aria-busy", "true");
-  resetting = resetting.then(async () => {
-    if (revision !== viewRevision) return;
-    await request("frame-reset");
-    if (revision !== viewRevision) return;
-    frameHostBridge?.close(); framePort?.close(); framePort = undefined;
-    // Replacing the element gives this document a new Window identity; old ready messages cannot capture its port.
-    const replacement = elements.session.cloneNode(false);
-    replacement.removeAttribute("src"); replacement.setAttribute("aria-busy", "true");
-    elements.session.replaceWith(replacement); elements.session = replacement;
-    replacement.src = "runtime/session.html?role=view";
-  }).catch(error => appendOutput("View could not load: " + error.message + "\n", "error"));
-}
-function receivePush(message) {
-  if (message.type === "state") applyState(message.values);
-  else if (message.type === "log" || message.type === "log-update") appendLog(message.value);
-  else if (safeMode) return;
-  else if (message.type === "ui") resetView(message.code);
-  else if (message.type === "frame-message") framePort?.postMessage(message.message);
-  else if (message.type === "ui-data") {
-    if (frameReady) framePort.postMessage({ type: "ui-data", data: message.data });
-    else queuedData.push(message.data);
+
+function reportAppLog(item) {
+  if (host) host.request("app-log", item).catch(showError);
+  else {
+    pendingAppLogs.push(item);
+    if (pendingAppLogs.length > 100) pendingAppLogs.shift();
+    showError(new Error(item.text));
   }
 }
-function connect() {
-  const connection = chrome.runtime.connect({ name: "fibona-view" }); port = connection;
-  connection.onMessage.addListener(message => {
-    if (message.type === "resetting") { applyState({status:"Stopping…"}); elements.session.setAttribute("aria-busy", "true"); return; }
-    if (message.type === "reset") { connectSnapshot(); return; }
-    if (message.type === "push") { receivePush(decodeBrowserValue(message.value)); return; }
-    const waiter = pending.get(message.id); if (!waiter) return;
-    pending.delete(message.id);
-    if (message.error) waiter.reject(Object.assign(new Error(message.error), { name: message.errorName ?? "Error" }));
-    else waiter.resolve(decodeBrowserValue(message.value));
-  });
-  connection.onDisconnect.addListener(() => {
-    for (const waiter of pending.values()) waiter.reject(new Error("Fibona browser connection interrupted; reconnecting"));
-    pending.clear(); viewInfo = undefined; elements.start.disabled = true; elements.stop.disabled = true;
-    elements.session.setAttribute("aria-busy", "true");
-    if (chrome.runtime.id) { elements.status.textContent = "Reconnecting…"; connect(); }
-    else elements.status.textContent = "Extension reloaded; refresh this page";
-  });
-  function connectSnapshot() { request("attach", { surface, safeMode, url: location.href }).then(snapshot => {
-    const reuseFrame = sessionId === snapshot.sessionId && appCode === snapshot.ui && framePort && frameReady;
-    sessionId = snapshot.sessionId;
-    viewInfo = snapshot.view; environment = snapshot.environment;
-    if (snapshot.settings) {
-      elements["base-url"].value = snapshot.settings.baseURL;
-      elements["api-key"].value = snapshot.settings.apiKey;
-      elements.model.value = snapshot.settings.model;
+
+function receiveHostMessage(message) {
+  if (message.type === "log") appendActivity(message.item);
+  else if (message.type === "status") showStatus(message.status);
+  else if (message.type === "ui-data" && !safeMode) {
+    if (appReady) appChannel.send({ type: "data", data: message.data });
+    else pendingAppData.push(message.data);
+  }
+}
+
+function scheduleReconnect() {
+  if (restarting || reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = undefined;
+    connectHost();
+  }, 500);
+}
+
+async function connectHost() {
+  if (connecting || restarting || host) return;
+  const revision = ++connectionRevision;
+  connecting = true;
+  let port, channel, attachTimeout;
+  try {
+    elements.status.textContent = "Connecting…";
+    await backgroundRequest("ensure");
+    if (revision !== connectionRevision || restarting) return;
+    port = chrome.runtime.connect({ name: "fibona-view" });
+    hostPort = port;
+    let sending = Promise.resolve();
+    const send = message => {
+      const next = sending.then(async () => port.postMessage(await encodeBrowserValue(message)));
+      sending = next.catch(() => {});
+      return next;
+    };
+    channel = new FibonaChannel(send, { message: receiveHostMessage });
+    port.onMessage.addListener(message => channel.receive(decodeBrowserValue(message)).catch(showError));
+    port.onDisconnect.addListener(() => {
+      channel.close("Fibona: session connection interrupted");
+      if (hostPort !== port) return;
+      host = undefined;
+      hostPort = undefined;
+      updateControls();
+      elements.status.textContent = restarting ? "Restarting…" : "Reconnecting…";
+      scheduleReconnect();
+    });
+    // A host can disappear between ensure and attach, leaving a port with no responding receiver.
+    attachTimeout = setTimeout(() => channel.close("Fibona: session connection timed out"), 10000);
+    const snapshot = await channel.request("attach", context);
+    if (revision !== connectionRevision || restarting) return;
+    context.id = snapshot.id;
+    host = channel;
+    activities.clear();
+    elements.log.replaceChildren();
+    snapshot.log.forEach(appendActivity);
+    showStatus(snapshot.status);
+    if (appReady) appChannel.send({ type: "context", context });
+    for (const item of pendingAppLogs.splice(0)) reportAppLog(item);
+    if (savedSettings?.apiKey) host.request("configured").catch(showError);
+  } catch (error) {
+    if (revision === connectionRevision && !restarting) {
+      elements.status.textContent = "Connection unavailable. Retrying…";
+      scheduleReconnect();
     }
-    activity.clear();
-    snapshot.log.forEach(appendLog);
-    applyState(snapshot);
-    if (safeMode && !snapshot.active) elements.status.textContent = "Recovery mode";
-    if (reuseFrame) elements.session.setAttribute("aria-busy", "false");
-    else resetView(snapshot.ui);
-  }).catch(error => { elements.status.textContent = "Connection failed"; appendOutput(error.message + "\n", "error"); }); }
-  connectSnapshot();
+    if (hostPort === port) hostPort = undefined;
+    port?.disconnect();
+    channel?.close(error.message);
+  } finally {
+    clearTimeout(attachTimeout);
+    if (revision === connectionRevision) connecting = false;
+    updateControls();
+  }
 }
+
+async function reloadApp() {
+  if (safeMode) return;
+  const revision = ++appRevision;
+  appReady = false;
+  appChannel?.close("Fibona: App reloaded");
+  appPort?.close();
+  appBridge?.close();
+  appChannel = appPort = appBridge = undefined;
+  pendingAppData.length = 0;
+  try {
+    const saved = await chrome.storage.local.get("fibona_app");
+    const code = typeof saved.fibona_app === "string" ? saved.fibona_app : await (await fetch(chrome.runtime.getURL("app/bootstrap.js"))).text();
+    if (revision !== appRevision) return;
+    appCode = code;
+    // New Window identity rejects stale ready messages from the previous App.
+    const replacement = elements.app.cloneNode(false);
+    replacement.removeAttribute("src");
+    elements.app.replaceWith(replacement);
+    elements.app = replacement;
+    replacement.src = "app/frame.html";
+  } catch (error) {
+    reportAppLog({ text: "App could not load: " + error.message, level: "error" });
+    showConsole(true);
+  }
+}
+
 addEventListener("message", event => {
-  if (event.source !== elements.session.contentWindow || event.data?.type !== "fibona_ready" || framePort) return;
-  const channel = new MessageChannel(), current = channel.port1, revision = viewRevision; framePort = current;
-  frameHostBridge = new FibonaNativeBridge(message => current.postMessage({type:"view-native",message}),globalThis);
-  current.onmessage = async ({ data }) => {
-    if (framePort !== current || revision !== viewRevision) return;
-    if (data.type === "connected") {
-      current.postMessage({ type: "run-view", code: appCode || 'document.body.style="margin:32px;color:#242321;font:16px system-ui";document.body.textContent="Fibona can build an app here. Open the console to give it a task.";', view: viewInfo, environment });
-    } else if (data.type === "view-ready") {
-      frameReady = true;
-      elements.session.setAttribute("aria-busy", "false");
-      if (data.error) { appendOutput("App error: " + data.error + "\n", "error"); showConsole(true); }
-      for (const value of queuedData.splice(0)) current.postMessage({ type: "ui-data", data: value });
-    } else if (data.type === "view-native") {
-      frameHostBridge.receive(data.message);
-    } else if (data.type === "native") {
-      request("native", data.message).catch(error => appendOutput(error.message + "\n", "error"));
-    } else if (data.type === "request") {
-      try { const value = await request("frame", data); if (framePort === current) current.postMessage({ type: "reply", id: data.id, value }); }
-      catch (error) { if (framePort === current) current.postMessage({ type: "reply", id: data.id, error: error.message, errorName: error.name }); }
-    } else if (data.type === "output") request("output", {text:data.text,level:data.level}).catch(console.error);
+  if (safeMode || event.source !== elements.app.contentWindow || event.data?.type !== "fibona_ready" || appChannel) return;
+  const { port1, port2 } = new MessageChannel();
+  appPort = port1;
+  const revision = appRevision;
+  const channel = new FibonaChannel(message => port1.postMessage(message), {
+    "show-console": ({ visible }) => showConsole(visible),
+    chrome: call => backgroundRequest("chrome", call),
+    send: async ({ data }) => {
+      if (!host) throw new Error("Fibona: session is connecting; try again shortly");
+      return host.request("ui", { data });
+    },
+    log: item => reportAppLog(item),
+    message: async message => {
+      if (revision !== appRevision) return;
+      if (message.type === "connected") {
+        appReady = true;
+        channel.send({ type: "run", code: appCode, context });
+        // A startup program may await incoming data; do not wait for it to finish before delivering messages.
+        for (const data of pendingAppData.splice(0)) channel.send({ type: "data", data });
+      } else if (message.type === "native") await appBridge.receive(message.message);
+    },
+  });
+  appChannel = channel;
+  appBridge = new FibonaNativeBridge(message => channel.send({ type: "native", message }), globalThis);
+  port1.onmessage = ({ data }) => {
+    if (revision === appRevision) channel.receive(data).catch(error => reportAppLog({ text: error.message, level: "error" }));
   };
-  current.start(); elements.session.contentWindow.postMessage({ type: "fibona_connect" }, "*", [channel.port2]);
+  elements.app.contentWindow.postMessage({ type: "fibona_connect" }, "*", [port2]);
 });
-function modelSettings() {
-  return {baseURL:elements["base-url"].value.trim().replace(/\/+$/, ""),apiKey:elements["api-key"].value.trim(),model:elements.model.value.trim()};
+
+function populateSettings(settings) {
+  savedSettings = settings;
+  if (!settings) { elements.settings.open = true; return; }
+  elements["base-url"].value = settings.baseURL || "https://api.openai.com/v1";
+  elements["api-key"].value = settings.apiKey || "";
+  elements.model.value = settings.model || "gpt-6-astra";
+  if (!settings.apiKey) elements.settings.open = true;
 }
-elements["start-form"].addEventListener("submit", event => {
+
+async function saveSettings() {
+  const settings = {
+    baseURL: elements["base-url"].value.trim().replace(/\/+$/, ""),
+    apiKey: elements["api-key"].value.trim(),
+    model: elements.model.value.trim(),
+  };
+  if (!settings.apiKey || !settings.model) throw new Error("Fibona: enter an API key and model in Model settings");
+  await chrome.storage.local.set({ fibona_settings: settings });
+  savedSettings = settings;
+  if (host) await host.request("configured");
+  elements["settings-status"].textContent = "Saved";
+}
+
+elements["settings-form"].addEventListener("submit", async event => {
   event.preventDefault();
-  applyState({active:true,waiting:false,status:"Starting"});
-  request("start", {settings:modelSettings()}).catch(recoverConsoleState);
+  elements["save-settings"].disabled = true;
+  try { await saveSettings(); }
+  catch (error) { elements["settings-status"].textContent = error.message; }
+  finally { elements["save-settings"].disabled = false; }
 });
-elements["start-form"].addEventListener("invalid", () => { elements.settings.open = true; }, true);
-elements["input-form"].addEventListener("submit", event => {
+elements["settings-form"].addEventListener("input", () => { elements["settings-status"].textContent = ""; });
+elements["input-form"].addEventListener("submit", async event => {
   event.preventDefault();
   const text = elements.message.value;
   if (!text.trim() || elements.send.disabled) return;
-  const starting = !state.active && !state.waiting;
-  if (starting && !elements["start-form"].reportValidity()) return;
-  applyState({active:starting || state.active,waiting:false,status:starting?"Starting":"Running"});
-  request(starting?"start":"input", starting?{settings:modelSettings(),text}:{text})
-    .then(() => { elements.message.value = ""; })
-    .catch(recoverConsoleState);
+  // Custom startup programs may accept input without ever calling a model.
+  if (!savedSettings?.apiKey) elements.settings.open = true;
+  submitting = true;
+  updateControls();
+  try {
+    await host.request("input", { text });
+    if (elements.message.value === text) elements.message.value = "";
+  } catch (error) { showError(error); }
+  finally { submitting = false; updateControls(); }
 });
 elements.message.addEventListener("keydown", event => {
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); elements["input-form"].requestSubmit(); }
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    elements["input-form"].requestSubmit();
+  }
 });
-elements.stop.addEventListener("click", () => {
-  applyState({status:"Stopping…"}); elements.session.setAttribute("aria-busy", "true");
-  request("stop").catch(error => appendOutput(error.message + "\n", "error"));
+// Discard the session and start a fresh one, after `before` (a storage change) if given.
+async function restartSession(before) {
+  restarting = true;
+  connectionRevision += 1;
+  connecting = false;
+  clearTimeout(reconnectTimer);
+  reconnectTimer = undefined;
+  host?.close("Fibona: session restarted");
+  host = undefined;
+  hostPort?.disconnect();
+  hostPort = undefined;
+  clearTimeout(forceTimer);
+  forceTimer = undefined;
+  forceOffered = false;
+  updateControls();
+  elements.status.textContent = "Restarting…";
+  try {
+    await (before ? before() : backgroundRequest("reset"));
+  } catch (error) { showError(error); }
+  finally { restarting = false; connectHost(); }
+}
+
+function stopTask() {
+  if (elements.stop.disabled) return;
+  if (forceOffered) return restartSession();
+  elements.status.textContent = "Stopping…";
+  forceTimer ??= setTimeout(() => {
+    forceTimer = undefined;
+    forceOffered = !runEnded();
+    updateControls();
+  }, FORCE_AFTER);
+  host?.request("stop").catch(showError);
+}
+elements.stop.addEventListener("click", stopTask);
+addEventListener("keydown", event => {
+  if (event.key === "Escape" && !event.isComposing && document.documentElement.dataset.view === "console") stopTask();
 });
-elements.recovery.addEventListener("click", event => {
-  if (event.detail && suppressSwitchClick) { suppressSwitchClick = false; return; }
-  showConsole(elements["console-panel"].hidden);
+
+elements["enter-safe"].addEventListener("click", () =>
+  restartSession(() => backgroundRequest("safe-mode", { on: true, reason: "started by you" })));
+elements["exit-safe"].addEventListener("click", () => restartSession(() => backgroundRequest("safe-mode", { on: false })));
+
+// The service worker clears storage, origin data and browser registrations with no session running; localStorage
+// needs a page, so this view clears it, then starts over.
+elements["clear-all"].addEventListener("click", async () => {
+  if (!confirm("Delete everything Fibona built and saved? This cannot be undone. Model settings are kept.")) return;
+  restarting = true;
+  updateControls();
+  elements["troubleshooting-status"].textContent = "Clearing…";
+  try {
+    await backgroundRequest("clear-all");
+    localStorage.clear();
+    sessionStorage.clear();
+    location.replace("index.html?mode=console");  // This view starts over too.
+  } catch (error) {
+    restarting = false;
+    updateControls();
+    elements["troubleshooting-status"].textContent = "Clearing failed: " + error.message;
+  }
 });
-elements.recovery.hidden = safeMode;
-document.body.classList.toggle("console-only", safeMode);
-showConsole(true); refreshPageScriptAccess(); connect();
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
+  if ("fibona_safe_mode" in changes && !safeLink && Boolean(changes.fibona_safe_mode.newValue) !== safeMode) location.reload();
+  if ("fibona_safe_mode" in changes && safeLink && !changes.fibona_safe_mode.newValue) location.replace("index.html?mode=console");
+  if ("fibona_app" in changes) reloadApp();
+  if ("fibona_settings" in changes) populateSettings(changes.fibona_settings.newValue);
+});
+
+elements["safe-notice"].hidden = !safeMode;
+elements["safe-reason"].textContent = safeState?.reason ? ` (${safeState.reason})` : "";
+elements["enter-safe"].parentElement.hidden = safeMode;
+// The safe-mode link turns safe mode on, so the session also starts without the saved startup.
+if (safeLink && !safeState) restartSession(() => backgroundRequest("safe-mode", { on: true, reason: "opened from the safe-mode link" }));
+showConsole(document.documentElement.dataset.view === "console");
+chrome.storage.local.get("fibona_settings").then(saved => populateSettings(saved.fibona_settings)).catch(showError);
+reloadApp();
+if (!(safeLink && !safeState)) connectHost();
