@@ -1,6 +1,7 @@
-// Fibona's core in JavaScript: Mind, Memory, Slot and Agent from core/agent.py, and the session of core/env.py.
+// Fibona's core: Mind, Memory, Slot and Agent, which run the cells, and JSEnv, the session they run in.
 // Plain JavaScript with no platform APIs: the host supplies the model transport and where output and input go.
-// runtime/runtime.js and console/console.js adapt the session to Chrome.
+// The session's names are prefixed fibona_, since a browser window already owns history and print.
+// runtime/session.js is the host's side of the session in Chrome.
 
 const INSTRUCTIONS = `
 You are the Fibona agent.
@@ -61,15 +62,12 @@ can use them.
   Always \`await fibona_call_me(...)\`; a cell that ends before you choose its next cell fails.
 - \`let\`, \`const\` and \`function\` declarations stay inside the cell. Assign globals to keep values:
   \`todos = []\`, \`globalThis.render = () => { ... }\`.
-- A finished cell's saved \`fibona_call_me\` cannot schedule another cell. Event handlers can supply data to
-  an active cell, which awaits it and calls you. Failed cells do not roll back side effects.
 
 
 ## State
 
-- Fibona-provided session names use the \`fibona_\` prefix; platform globals keep their original names.
 - **Variables** persist. Inspect them with \`Object.keys(globalThis)\`; values are not automatically sent to you.
-- **\`fibona_history\`**: recorded cells as \`{code, summary, output, error}\` objects, with the full output.
+- **\`fibona_history\`**: one \`{code, summary, output, error}\` object per finished cell, with the full output.
   Summaries record intent; output and errors record what happened. Each cell receives a copy of the host's records.
 - Choose what to include in \`input\`. The host does not select or send working context for you.
 
@@ -94,39 +92,6 @@ can use them.
 - Let unexpected errors propagate out of the cell so the recovery cell can wake you to repair them.
   Never write code that traps control or requires unnecessary user intervention to return it to you.
 - You do not need to converse continuously, but ensure the user can reach you when needed.
-
-
-## Browser environment
-
-These are host facts. Working instructions and context selection belong to the editable bootstrap,
-not this core. \`fibona_source_code\` contains the packaged source and README; read relevant excerpts as needed.
-
-- You run in a singleton background JS REPL inside an offscreen sandbox. Your \`document\` is hidden,
-  not the current webpage or your visible app. Closing views or restarting the service worker preserves
-  REPL state. Stop resets it; browser shutdown, extension reload or renderer failure loses live JS memory.
-  Saved startup code in storage.local's \`fibona_boot\` key runs once per fresh runtime, not per view.
-- \`await fibona_chrome(path,...args)\` forwards native Chrome methods. Arguments/results follow the JSON
-  contract; functions and Ports cannot cross. \`fibona_chrome.callback(path,...args)\` waits for a native
-  callback, rejects runtime.lastError, and returns callback values or the synchronous result if none.
-  \`await fibona_on(path,callback)\` subscribes to a discovered event and returns async unsubscribe;
-  \`fibona_on_message(async(message,sender)=>reply)\` handles content/user-script messages.
-- \`await fibona_browser(path,...args)\` calls native Web APIs in the extension's offscreen host.
-  The root supports async get/set/construct/release; returned handles also have call(path,...args).
-  The root itself calls methods by path. Data is cloned; native objects stay in the host. Pass handles back to preserve
-  identity; construct host objects through the bridge. Functions become async callbacks, so synchronous
-  callback contracts cannot be transparently emulated. Releasing a handle does not close its resource;
-  native close/removeListener operations are still required. \`fibona_browser.release(callback)\` releases
-  an exported callback reference after unregistering it.
-- \`await fibona_ui(codeString)\` installs JS in each attached view and reruns it on reopen. View DOM and
-  variables are separate from REPL state. View \`fibona_send(data)\` calls background \`fibona_on_ui\` handlers;
-  background \`fibona_ui_send(data,viewId?)\` calls view \`fibona_on_data\` handlers. \`fibona_ui_context\`
-  identifies the view. View-only \`fibona_view\` uses the native bridge for the outer page's window/DOM,
-  including the editable #recovery switch. \`fibona_show_console(visible)\` and \`fibona_set_title(title)\`
-  control normal views; the separate index.html?safe=1 console never loads custom app code and stays visible.
-- \`fibona_environment\` reports grants, discovered events, session id and the native userScripts gate,
-  refreshed before each run. Host permissions do not bypass restricted pages, CSP, user activation or
-  Chrome's Allow User Scripts toggle. The opaque sandbox restricts direct origin APIs; privileged host
-  code cannot eval generated JS. Native globals remain native; bridge calls select the owning context.
 `.trim();
 
 const SET_NEXT_CELL = {
@@ -262,16 +227,15 @@ Repair the failure and continue the program.
 
   constructor(mind) {
     this.mind = mind;
-    this.memory = new Memory();
   }
 
   // Execute bootstrapCell verbatim, then run the cells selected by its program.
   // Startup policy, user tasks and UI composition belong in the bootstrap cell. onCell(number, summary, code)
   // observes each cell before it runs; onResult(number, result) receives its validated result, including the
-  // cell that quits. Resolves when a cell quits, or when a repair cell fails too: unlike core/agent.py, which
-  // retries without limit, so an unreachable model cannot spin the loop. Interruptions are not supported.
+  // cell that quits. Resolves when a cell quits, or when a repair cell fails too, so an unreachable model cannot
+  // spin the loop. The host interrupts a run by making its waits reject with Quit (see runtime/session.js).
   async run(bootstrapCell, { env = new JSEnv(), onCell, onResult } = {}) {
-    const memory = this.memory;
+    const memory = new Memory();
     let code = bootstrapCell;
     let summary = "Run the bootstrap cell.";
     let repairing = false;
@@ -344,15 +308,12 @@ class JSEnv {
     this.readInput = readInput;
     this.capture = null;  // The running cell's output.
     const print = (...values) => this.print(values.map(format).join(" ") + "\n");
-    const console = Object.fromEntries(["log", "info", "warn", "error"].map(level => [level,
-      (...values) => this.print(values.map(format).join(" ") + "\n", level),
-    ]));
-    this.bind({ fibona_print: print, fibona_console: console });
+    this.bind({ fibona_print: print, fibona_console: { log: print, info: print, warn: print, error: print } });
   }
 
-  print(text, level = "log") {
+  print(text) {
     this.capture?.push(text);
-    this.write(text, level);
+    this.write(text);
   }
 
   // Put names (fibona_call_me, fibona_quit, ...) into the cells' global scope, replacing old ones.
@@ -363,7 +324,7 @@ class JSEnv {
   // Resolves to the cell's output and error; Quit sets the quit flag.
   async execute(code) {
     const output = (this.capture = []);
-    this.bind({ fibona_input: (...args) => this.readInput(...args) });
+    this.bind({ fibona_input: this.readInput });
     try {
       await (0, eval)(`(async () => {\n${code}\n})()`);  // Indirect eval: global scope, not this function's.
       return new CellResult(output.join(""));
