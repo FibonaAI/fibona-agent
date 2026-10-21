@@ -42,8 +42,11 @@ your memory.
 
 ## call_me
 
-`call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for
-all items).
+`call_me(input, **params)` wakes you and returns a Response with the model's unmodified `r.output` items.
+`r.output_text` contains only reply text and can be empty even when a next cell was accepted.
+`r.scheduled` tells you whether this call accepted a next cell; it does not mean that cell has run.
+To continue the same conversation, append `r.replay_items` to its earlier input. This includes all model
+items and host tool results from this call, including retries. Your own tool calls still need your results.
 - `input`: a string, or a list of messages and items.
 - Optional: `tools` and `tool_choice` for your own tools, `text` for structured output (e.g. `{"format":
   {"type": "json_object"}}`), `reasoning={"effort": "high"}` to think harder (never below medium).
@@ -61,7 +64,8 @@ can use them.
     pages = fetch_all(urls)  # do the work in code
     print(f"Fetched {len(pages)} pages.")  # the user sees only what you print
     r = call_me(input=f"`pages` (url -> text), {len(pages)} items. Next: summarize.")
-    print(r.output_text)  # show the reply to the user
+    if r.output_text:
+        print(r.output_text)  # show any reply text to the user
 
 
 ## State
@@ -124,6 +128,19 @@ PROTECTED = {
 Submit = Callable[[str, str], None]
 
 
+class WakeResponse(Response):
+    """The final model response, plus this wake's scheduling result and conversation delta.
+
+    `output` and `output_text` retain the SDK meanings; neither is a scheduling status.
+    Append `replay_items` to the original input to continue, rather than replaying `output`
+    alone: host calls already have results here, and rejected attempts are included.
+    Calls to the caller's own tools still need results supplied by that caller.
+    """
+
+    scheduled: bool
+    replay_items: list[dict]
+
+
 class Mind:
     """The agent's mind: instructions, model and the `set_next_cell` tool.
 
@@ -135,7 +152,7 @@ class Mind:
         self.client, self.model, self.instructions = client, model, instructions
 
     @log_wake
-    def wake(self, input=(), *, submit: Submit, **body) -> Response:
+    def wake(self, input=(), *, submit: Submit, **body) -> WakeResponse:
         """Wake the mind. Exposed to cells as `call_me`.
 
         input: a string or list of input items, passed positionally or by keyword; defaults to empty.
@@ -149,15 +166,18 @@ class Mind:
           Normalized or fixed by the mind:
             model, instructions: the mind itself.
             reasoning: only `effort` is kept, raised to at least "medium".
-            stream, background: always off; the full Response is returned.
+            stream, background: always off; all final Response fields are preserved.
             store, previous_response_id: stateless; to continue a conversation, put its
-                earlier items (e.g. `r.output`) into `input`.
+                earlier input plus `r.replay_items` into `input`. Supply results for your own tools.
             parallel_tool_calls: always off, so `set_next_cell` never shares a turn
                 with the caller's tools and the caller never has to answer it.
         submit: where `set_next_cell(code, summary)` lands. The agent binds a fresh one
             per cell, so a late call from a finished cell cannot choose the next one.
-            A scheduled cell ends the wake without another model turn; the returned output then
-            holds only the reply text written before the call. A rejected one is sent back to retry.
+            An accepted cell ends the wake with `r.scheduled=True` and no acknowledgement request.
+            This means queued, not executed. `r.output` retains the model's tool call and reasoning;
+            `r.output_text` may be empty. A rejected submission goes back to the model to retry.
+        Returns a Response subclass with `scheduled` and `replay_items`. The latter contains this
+            wake's model outputs and host tool results in order, excluding the original input.
         extra_body cannot override fields in PROTECTED.
 
         Example (agent side, before each cell runs):
@@ -166,10 +186,12 @@ class Mind:
 
         Example (cell side, written by the model; only `submit` is already bound):
             r = call_me(input="Tests failed:\\n" + log + "\\nFix them and submit the next cell.")
-            print(r.output_text)
+            if r.output_text:
+                print(r.output_text)
         """
         effort = (body.get("reasoning") or {}).get("effort")
         items = _input_items(input)
+        input_count = len(items)
         tools = [t for t in body.get("tools", []) if t.get("name") != SET_NEXT_CELL["name"]]
         body = {k: v for k, v in body.items() if k not in PROTECTED}
         if body.get("extra_body") is not None:
@@ -186,21 +208,24 @@ class Mind:
         )
         while True:
             response = self.client.responses.create(**body, input=items)
+            items.extend(item.model_dump(mode="json", exclude_none=True) for item in response.output)
             host = next(
                 (c for c in response.output if c.type == "function_call" and c.name == SET_NEXT_CELL["name"]), None
             )
-            if host is None:
-                return response  # A plain reply, or one of the caller's tools for it to answer.
-            result = _run_host_tool(host, submit)
-            if json.loads(result)["scheduled"]:
-                # The next cell is chosen; another turn would only acknowledge it. Keep the reply text so
-                # `r.output` stays safe to replay: an unanswered call or a lone reasoning item would be rejected.
-                response.output = [item for item in response.output if item.type == "message"]
-                return response
-            output = {"type": "function_call_output", "call_id": host.call_id, "output": result}
-            # A rejected submission goes back to the mind to retry. Replay every output item, including
-            # encrypted reasoning, without server-side storage.
-            items = [*items, *(item.model_dump(mode="json", exclude_none=True) for item in response.output), output]
+            scheduled = False
+            if host is not None:
+                result = _run_host_tool(host, submit)
+                items.append({"type": "function_call_output", "call_id": host.call_id, "output": result})
+                scheduled = json.loads(result)["scheduled"]
+                if not scheduled:
+                    continue  # Replay the complete exchange so the model can repair the rejected submission.
+            # Keep the SDK output intact, and pair host calls in a separate, input-ready history.
+            # The SDK already parsed the response; keep its objects and provider-specific fields as-is.
+            returned = WakeResponse.model_construct(
+                **dict(response), scheduled=scheduled, replay_items=items[input_count:]
+            )
+            returned._request_id = getattr(response, "_request_id", None)
+            return returned
 
     def query(self, input, **params) -> str:
         """A plain model call used as a function (summarize, extract, classify, ...).
@@ -363,4 +388,4 @@ Repair the failure and continue the program.
 
 def _wake_cell(message: str) -> str:
     """A cell that only wakes the mind with `message`; the mind chooses the next cell."""
-    return f"response = call_me(input={message!r})\nprint(response.output_text)"
+    return f"response = call_me(input={message!r})\nif response.output_text:\n    print(response.output_text)"
