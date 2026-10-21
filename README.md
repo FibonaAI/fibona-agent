@@ -115,30 +115,6 @@ with OpenAI() as client:
     Agent(mind, cwd=".").run(bootstrap_cell, env=env)
 ```
 
-`call_me` returns a `WakeResponse`, a subclass of the SDK's `Response`:
-
-- `r.output` preserves the final model response, including reasoning and tool calls.
-- `r.output_text` contains only text the model wrote. It may be empty after a successful submission.
-- `r.scheduled` is true when this call accepted the next cell. That cell runs after the current cell finishes.
-- `r.replay_items` contains this call's model outputs and host tool results, including rejected attempts.
-  Append these items to the original input to continue the conversation. Calls to your own tools still need
-  their results; `set_next_cell` results are already included.
-
-An accepted `set_next_cell` returns immediately, without a second model request just to acknowledge it.
-Keep scheduling status separate from reply text, and use the complete exchange for continuation:
-
-```python
-conversation = [{"role": "user", "content": "Choose the next cell."}]
-r = call_me(input=conversation)
-if r.output_text:
-    print(r.output_text)
-if r.scheduled:
-    conversation.extend(r.replay_items)
-    # Save this conversation for a later call; the selected cell has not run yet.
-```
-
-Do not replay `r.output` alone after scheduling: it contains a tool call whose result is in `r.replay_items`.
-
 ## Development
 
 Enable Ruff checks before each commit:
@@ -153,12 +129,6 @@ To check all tracked files manually:
 
 ```bash
 uv run pre-commit run --all-files
-```
-
-Run the core regression tests without API credentials:
-
-```bash
-uv run python -m unittest discover -s tests -v
 ```
 
 ## Citation
