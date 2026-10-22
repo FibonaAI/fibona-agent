@@ -2,15 +2,13 @@
 
 import asyncio
 import atexit
-import base64
 import inspect
 import io
 import os
-import subprocess
 import sys
 import traceback
 from collections import deque
-from functools import partial
+from concurrent.futures import wait
 from pathlib import Path
 from queue import Queue
 from threading import Event, Thread, current_thread
@@ -18,18 +16,14 @@ from time import monotonic
 from uuid import uuid4
 
 from IPython.core.interactiveshell import InteractiveShell
-from prompt_toolkit.application import Application
-from prompt_toolkit.clipboard import ClipboardData
-from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import FormattedText, fragment_list_to_text
+from prompt_toolkit.application import Application, run_in_terminal
+from prompt_toolkit.formatted_text import FormattedText, PygmentsTokens, to_formatted_text
 from prompt_toolkit.input import create_input
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import ConditionalContainer, HSplit, Layout, ScrollablePane, VSplit, Window, WindowAlign
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
-from prompt_toolkit.layout.screen import Char
-from prompt_toolkit.lexers import PygmentsLexer
-from prompt_toolkit.mouse_events import MouseButton, MouseEventType
+from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.output import ColorDepth, create_output
+from prompt_toolkit.renderer import print_formatted_text
 from prompt_toolkit.styles import Style, merge_styles
 from prompt_toolkit.styles.pygments import style_from_pygments_cls
 from prompt_toolkit.utils import get_cwidth
@@ -75,21 +69,12 @@ class EventStream(io.TextIOBase):
                 stream.flush()
 
 
-class SelectableBody(HSplit):
-    """Paint mouse-selected text after the conversation's source and output windows."""
-
-    def __init__(self, terminal, children):
-        super().__init__(children)
-        self.terminal = terminal
-
-    def write_to_screen(self, screen, mouse_handlers, write_position, parent_style, erase_bg, z_index):
-        # ScrollablePane's default cells must not override a child's card background.
-        super().write_to_screen(screen, mouse_handlers, write_position, "", erase_bg, z_index)
-        screen.draw_with_z_index(1, partial(self.terminal._paint_body, screen))
-
-
 class Terminal:
-    """Attach to the existing IPython session; the cell owns this UI and its thread."""
+    """Attach to the existing IPython session; the cell owns this UI and its thread.
+
+    The conversation is printed above the composer into the terminal's own scrollback, so scrolling,
+    selection and copying are native; the application itself only draws the composer and status bar.
+    """
 
     instructions = TERMINAL_INSTRUCTIONS
     LOGO = """███████╗██╗██████╗  ██████╗ ███╗   ██╗ █████╗
@@ -98,6 +83,10 @@ class Terminal:
 ██╔══╝  ██║██╔══██╗██║   ██║██║╚██╗██║██╔══██║
 ██║     ██║██████╔╝╚██████╔╝██║ ╚████║██║  ██║
 ╚═╝     ╚═╝╚═════╝  ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝"""
+    INDENT = "   "
+    FLUSH_DELAY = 0.03  # Seconds to batch live output before printing it above the composer.
+    CODE_PREVIEW = 8  # Source lines shown in a code card; Ctrl+O shows all lines of later cells.
+    CODE_WIDTH = 96  # Widest code card, in terminal cells.
 
     def __init__(self, shell: InteractiveShell, *, input=None, output=None):
         self.shell = shell
@@ -130,14 +119,10 @@ class Terminal:
         self.model = self.mind.model if self.mind is not None else "Python"
         self.create_response = self.mind.client.responses.create if self.mind is not None else None
         self.show_welcome = not shell.user_ns.get("history", [])
+        self.show_code = False  # Show each cell's full source instead of a preview; toggled with Ctrl+O.
         self.cells = {}
-        self.output_block = None
-        self.follow_output = True
-        self.selection_anchor = self.selection_cursor = self.drag_start = None
-        self.messages = HSplit([], padding=1)
-        self.timeline = ScrollablePane(
-            self.messages, show_scrollbar=False, keep_cursor_visible=False, keep_focused_window_visible=False
-        )
+        self.pending = {"text": "", "channel": "stdout"}  # Live output not yet printed: at most a partial line.
+        self.flush_handle = None
         self.composer = TextArea(
             multiline=True,
             height=self._composer_height,
@@ -159,13 +144,13 @@ class Terminal:
         def newline(event):
             self.composer.buffer.insert_text("\n")
 
+        @self.keys.add("c-o")
+        def toggle_code(event):
+            self.show_code = not self.show_code
+            self.app.invalidate()
+
         @self.keys.add("c-c")
         def quit_ui(event):
-            if self.selection_anchor != self.selection_cursor:
-                self._copy_text(self._selected_text())
-                self.selection_anchor = self.selection_cursor = None
-                self.app.invalidate()
-                return
             self.user_quit = True
             self.app.exit()
 
@@ -189,14 +174,6 @@ class Terminal:
             height=1,
         )
         keys = Window(FormattedTextControl(self._keys_text), height=1, style="class:notice")
-        welcome = Window(FormattedTextControl(self._welcome_text), align=WindowAlign.CENTER)
-        body = SelectableBody(
-            self,
-            [
-                ConditionalContainer(welcome, filter=Condition(lambda: self.show_welcome)),
-                ConditionalContainer(self.timeline, filter=Condition(lambda: not self.show_welcome)),
-            ],
-        )
         return Application(
             layout=Layout(
                 VSplit(
@@ -204,8 +181,6 @@ class Terminal:
                         Window(width=2),
                         HSplit(
                             [
-                                Window(height=1),
-                                body,
                                 Window(height=1),
                                 HSplit(
                                     [
@@ -220,23 +195,20 @@ class Terminal:
                         ),
                         Window(width=2),
                     ],
-                    style="class:background",
                 ),
                 focused_element=self.composer,
             ),
             key_bindings=self.keys,
-            full_screen=True,
-            mouse_support=True,
+            full_screen=False,
+            erase_when_done=True,  # A closed or replaced UI leaves only the conversation in the scrollback.
             color_depth=ColorDepth.TRUE_COLOR,
             include_default_pygments_style=False,
+            # Foreground accents only: the terminal's own background and text colors show through.
             style=merge_styles(
                 [
                     style_from_pygments_cls(MonokaiStyle),
                     Style.from_dict(
                         {
-                            "": "bg:#20202e #d6d6dd",
-                            "background": "bg:#20202e #d6d6dd",
-                            "messages": "bg:#20202e #d6d6dd",
                             "composer": "bg:#41414e #d6d6dd",
                             "status": "#a4cea2",
                             "model": "#ba94ed",
@@ -245,10 +217,12 @@ class Terminal:
                             "logo": "#78628f",
                             "notice": "#9494a4",
                             "user": "bg:#41414e #d6d6dd",
-                            "cell": "#ba94ed",
+                            "cell": "#ba94ed bold",
                             "error": "#f18c8c",
+                            "ok": "#a4cea2",
+                            "frame": "#5c5c70",
+                            "code": "bg:#272822 #f8f8f2",
                             "speed": "#e5c07b",
-                            "selection": "bg:#695a80 #ffffff",
                         }
                     ),
                 ]
@@ -256,8 +230,7 @@ class Terminal:
             input=input,
             output=output,
             refresh_interval=0.1,
-            before_render=self._follow_scroll,
-            after_render=self._after_render,
+            after_render=lambda app: self.ready.set(),
         )
 
     def _composer_height(self):
@@ -268,156 +241,12 @@ class Terminal:
 
     def _keys_text(self):
         width = self.app.output.get_size().columns - 6
-        full = "Enter send · Alt+Enter newline · Drag to copy · Ctrl+C quit"
+        code = "short code" if self.show_code else "full code"
+        full = f"Enter send · Alt+Enter newline · Ctrl+O {code} · Ctrl+C quit"
         if len(full) <= width:
             return full
         short = "Enter send · Ctrl+C quit"
         return short if len(short) <= width else "Enter · Ctrl+C"
-
-    def _body_height(self):
-        return max(1, self.app.output.get_size().rows - self._composer_height() - 6)
-
-    def _follow_scroll(self, app):
-        if not self.show_welcome:
-            width = max(1, app.output.get_size().columns - 4)
-            height = self.messages.preferred_height(width, sys.maxsize).preferred
-            self.timeline.max_available_height = max(height, self._body_height())
-            if self.follow_output:
-                self.timeline.vertical_scroll = max(0, height - self._body_height())
-
-    def _after_render(self, app):
-        # Keep clicks, wheel scrolling and text selection available while the composer has focus.
-        handlers = app.renderer.mouse_handlers.mouse_handlers
-        wrapped = {}
-        for y in range(app.output.get_size().rows):
-            for x in range(app.output.get_size().columns):
-                original = handlers[y][x]
-                if original not in wrapped:
-
-                    def handle(event, original=original):
-                        return self._handle_pointer(event, original)
-
-                    wrapped[original] = handle
-                handlers[y][x] = wrapped[original]
-        self.ready.set()
-
-    def _handle_pointer(self, event, original):
-        """Distinguish a title click from a drag, including releases outside the conversation."""
-        size = self.app.output.get_size()
-        inside = 2 <= event.position.x < size.columns - 2 and 1 <= event.position.y <= self._body_height()
-        if not inside and self.drag_start is None:
-            # FormattedTextControl counts OSC 8 escapes in fragment clicks; use the rendered link span.
-            char = self.app.renderer.last_rendered_screen.data_buffer[event.position.y][event.position.x]
-            if event.event_type == MouseEventType.MOUSE_UP and "class:notebook" in char.style.split():
-                return self._open_notebook(event)
-            return original(event)
-        point = (
-            min(self._body_height(), max(1, event.position.y)),
-            min(size.columns - 2, max(2, event.position.x)),
-        )
-        if event.event_type in {MouseEventType.SCROLL_UP, MouseEventType.SCROLL_DOWN}:
-            self.selection_anchor = self.selection_cursor = self.drag_start = None
-            width = max(1, size.columns - 4)
-            height = self.messages.preferred_height(width, self.timeline.max_available_height).preferred
-            maximum = max(0, height - self._body_height())
-            step = -3 if event.event_type == MouseEventType.SCROLL_UP else 3
-            self.timeline.vertical_scroll = min(maximum, max(0, self.timeline.vertical_scroll + step))
-            self.follow_output = self.timeline.vertical_scroll == maximum
-        elif event.event_type == MouseEventType.MOUSE_DOWN and event.button == MouseButton.LEFT:
-            self.selection_anchor = self.selection_cursor = self.drag_start = point
-        elif event.event_type == MouseEventType.MOUSE_MOVE and self.drag_start is not None:
-            self.selection_cursor = point
-            self.follow_output = False
-        elif event.event_type == MouseEventType.MOUSE_UP and self.drag_start is not None:
-            self.selection_cursor = point
-            self.drag_start = None
-            if self.selection_anchor != self.selection_cursor:
-                self._copy_text(self._selected_text())
-            else:
-                self.selection_anchor = self.selection_cursor = None
-                original(event)
-        else:
-            return original(event)
-        self.app.invalidate()
-        return None
-
-    def _selection_ranges(self):
-        if self.selection_anchor is None or self.selection_cursor is None:
-            return
-        start, end = sorted((self.selection_anchor, self.selection_cursor))
-        for y in range(start[0], end[0] + 1):
-            left = start[1] if y == start[0] else 2
-            right = end[1] if y == end[0] else self.app.output.get_size().columns - 2
-            yield y, left, right
-
-    def _paint_body(self, screen):
-        for y in range(1, 1 + self._body_height()):
-            for x in range(2, self.app.output.get_size().columns - 2):
-                char = screen.data_buffer[y][x]
-                if char.style.strip() in {"", "[transparent]"}:
-                    screen.data_buffer[y][x] = Char(char.char, "class:background")
-        for y, left, right in self._selection_ranges():
-            for x in range(left, right):
-                char = screen.data_buffer[y][x]
-                screen.data_buffer[y][x] = Char(char.char, char.style + " class:selection")
-
-    def _selected_text(self):
-        screen = self.app.renderer.last_rendered_screen
-        start, end = sorted((self.selection_anchor, self.selection_cursor))
-        for window, position in screen.visible_windows_to_write_positions.items():
-            info = window.render_info
-            if info is None or not all(
-                position.ypos <= y < position.ypos + position.height
-                and position.xpos <= x <= position.xpos + position.width
-                for y, x in (start, end)
-            ):
-                continue
-            # Copy logical lines within one source/output window, excluding UI padding and soft wraps.
-            lines = (
-                window.content.buffer.document.lines
-                if isinstance(window.content, BufferControl)
-                else [fragment_list_to_text(info.ui_content.get_line(row)) for row in range(info.ui_content.line_count)]
-            )
-            endpoints = []
-            for y, x in (start, end):
-                row, column = info.visible_line_to_row_col.get(y - position.ypos, (0, 0))
-                line = lines[row]
-                offset, width = x - position.xpos, 0
-                while column < len(line) and width + get_cwidth(line[column]) <= offset:
-                    width += get_cwidth(line[column])
-                    column += 1
-                endpoints.append((row, column))
-            (first_row, first_column), (last_row, last_column) = endpoints
-            lines = lines[first_row : last_row + 1]
-            lines[-1] = lines[-1][:last_column]
-            lines[0] = lines[0][first_column:]
-            return "\n".join(lines)
-        return "\n".join(
-            "".join(screen.data_buffer[y][x].char for x in range(left, right)).rstrip()
-            for y, left, right in self._selection_ranges()
-        )
-
-    def _copy_text(self, text):
-        """Copy selected text to the app, terminal clipboard and macOS pasteboard."""
-        if text:
-            self.app.clipboard.set_data(ClipboardData(text))
-            encoded = base64.b64encode(text.encode()).decode()
-            self.app.output.write_raw(f"\x1b]52;c;{encoded}\x07")
-            self.app.output.flush()
-            if sys.platform == "darwin":
-                subprocess.run(
-                    ["/usr/bin/pbcopy"], input=text.encode(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-
-    def _welcome_text(self):
-        size = self.app.output.get_size()
-        logo = (
-            self.LOGO
-            if size.columns - 4 >= max(map(len, self.LOGO.splitlines())) and self._body_height() >= 8
-            else "FIBONA"
-        )
-        padding = max(0, (self._body_height() - len(logo.splitlines()) - 2) // 2)
-        return FormattedText([("class:logo", "\n" * padding + logo), ("class:notice", "\n\nEnter a task to begin.")])
 
     def _speed_text(self):
         now = monotonic()
@@ -437,17 +266,18 @@ class Terminal:
         budget = max(1, self.app.output.get_size().columns - 6 - len(self._speed_text()))
         for part in [
             ("class:model", " · " + self.model),
-            ("class:notebook", " · notebook", self._open_notebook),
+            ("class:notebook", " · notebook"),
             ("class:session", " · " + self.session_id[:8]),
         ]:
             visible_width = sum(len(item[1]) for item in parts if "[ZeroWidthEscape]" not in item[0])
             if visible_width + len(part[1]) <= budget:
                 if part[0] == "class:notebook":
+                    # An OSC 8 hyperlink: terminals that support it open the notebook on click.
                     parts.extend(
                         [
                             ("class:session", " · "),
                             ("[ZeroWidthEscape]", f"\x1b]8;;{self.notebook_path.as_uri()}\x1b\\"),
-                            ("class:notebook", "notebook", self._open_notebook),
+                            ("class:notebook", "notebook"),
                             ("[ZeroWidthEscape]", "\x1b]8;;\x1b\\"),
                         ]
                     )
@@ -455,96 +285,129 @@ class Terminal:
                     parts.append(part)
         return FormattedText(parts)
 
-    def _open_notebook(self, event):
-        if event.event_type == MouseEventType.MOUSE_UP:
-            if sys.platform == "win32":
-                os.startfile(self.notebook_path)
-            else:
-                opener = "open" if sys.platform == "darwin" else "xdg-open"
-                subprocess.Popen(
-                    [opener, str(self.notebook_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-
     def _set_state(self, state):
         self.status, self.started = state, monotonic()
         self.app.invalidate()
 
+    def _print(self, fragments):
+        """Print formatted text above the composer, into the terminal's scrollback; returns a Future."""
+
+        def write():
+            print_formatted_text(
+                self.app.output, FormattedText(fragments), self.app.style, color_depth=self.app.color_depth
+            )
+            self.app.output.flush()
+
+        return run_in_terminal(write)
+
+    def _flush_output(self, final=True):
+        """Print buffered live output; unless final, keep a trailing partial line for the next write."""
+        self.flush_handle = None
+        text = self.pending["text"]
+        cut = len(text) if final else text.rfind("\n") + 1
+        if not cut:
+            return None
+        self.pending["text"] = text[cut:]
+        lines = text[:cut].removesuffix("\n").split("\n")
+        style = "class:error" if self.pending["channel"] == "stderr" else ""
+        fragments = []
+        for line in lines:
+            fragments += [("", self.INDENT), (style, line), ("", "\n")]
+        return self._print(fragments)
+
     def _append_text(self, text):
         self._append_output(text)
 
-    def _text_window(self, text, style=""):
-        return Window(FormattedTextControl(text), wrap_lines=True, dont_extend_height=True, style=style)
+    def _append_output(self, text, channel="stdout"):
+        if self.pending["channel"] != channel:
+            self._flush_output()
+            self.pending["channel"] = channel
+        self.pending["text"] += text
+        if self.flush_handle is None:
+            self.flush_handle = self.app.loop.call_later(self.FLUSH_DELAY, self._flush_output, False)
+
+    def _print_welcome(self):
+        size = self.app.output.get_size()
+        logo = self.LOGO if size.columns - 4 >= max(map(len, self.LOGO.splitlines())) else "FIBONA"
+        lines = [line for part in logo.splitlines() for line in (("", "  "), ("class:logo", part), ("", "\n"))]
+        return self._print([("", "\n"), *lines, ("", "\n  "), ("class:notice", "Enter a task to begin."), ("", "\n")])
 
     def _append_user(self, text):
-        self.show_welcome = False
-        self.follow_output = True
-        self.selection_anchor = self.selection_cursor = self.drag_start = None
-        self.output_block = None
-        self.messages.children.append(
-            HSplit(
-                [
-                    Window(height=1),
-                    VSplit([Window(width=1), self._text_window("\u203a " + text), Window(width=1)]),
-                    Window(height=1),
-                ],
-                style="class:user",
-            )
-        )
-        self.app.invalidate()
+        self._flush_output()
+        width = max(1, self.app.output.get_size().columns - 4)
+        fragments = [("", "\n")]
+        for number, line in enumerate(text.split("\n")):
+            line = ("\u203a " if number == 0 else "  ") + line
+            fragments += [
+                ("", "  "),
+                ("class:user", " " + line + " " * max(0, width - get_cwidth(line) - 1)),
+                ("", "\n"),
+            ]
+        self._print(fragments)
 
-    def _append_output(self, text, channel="stdout"):
-        self.show_welcome = False
-        if self.output_block is None or self.output_block["channel"] != channel:
-            block = {"text": "", "channel": channel}
-            self.output_block = block
-            window = self._text_window(lambda: block["text"].rstrip("\n"), "class:error" if channel == "stderr" else "")
-            self.messages.children.append(
-                ConditionalContainer(
-                    VSplit([Window(width=3), window]), filter=Condition(lambda: bool(block["text"].strip()))
-                )
-            )
-        self.output_block["text"] += text
-        self.app.invalidate()
+    def _code_card(self, code):
+        """The cell's highlighted source in a frame: a preview, or all of it with show_code."""
+        columns = self.app.output.get_size().columns
+        width = max(8, min(self.CODE_WIDTH, columns - len(self.INDENT) - 6))  # Inside "│ " and " │".
+        lines = [[]]
+        for style, text in to_formatted_text(PygmentsTokens(list(PythonLexer().get_tokens(code.expandtabs(4))))):
+            for index, part in enumerate(text.split("\n")):
+                if index:
+                    lines.append([])
+                if part:
+                    lines[-1].append((style, part))
+        while lines and not lines[-1]:
+            lines.pop()
+        shown = lines if self.show_code else lines[: self.CODE_PREVIEW]
+        if hidden := len(lines) - len(shown):
+            shown.append([("class:notice", f"… {hidden} more lines in the notebook")])
+        rule = "─" * (width + 2)
+        fragments = [("", self.INDENT), ("class:frame", f"┌{rule}┐"), ("", "\n")]
+        for line in shown:
+            fitted = [(f"class:code {style}", text) for style, text in _fit(line, width)]
+            fragments += [
+                ("", self.INDENT),
+                ("class:frame", "│"),
+                ("class:code", " "),
+                *fitted,
+                ("class:code", " "),
+                ("class:frame", "│"),
+                ("", "\n"),
+            ]
+        return [*fragments, ("", self.INDENT), ("class:frame", f"└{rule}┘"), ("", "\n")]
 
-    def _add_cell(self, number, summary, code):
-        self.output_block = None
-        cell = {"summary": summary, "code": code, "collapsed": True, "state": "●"}
-        self.cells[number] = cell
-        header = self._text_window(
-            lambda: FormattedText(
-                [
-                    (
-                        "class:error" if cell["state"] == "✗" else "class:cell",
-                        f"{'▶' if cell['collapsed'] else '▼'} {cell['state']} cell {number} · {cell['summary']}",
-                        partial(self._toggle_cell, number),
-                    )
-                ]
-            )
-        )
-        source = TextArea(text=code, read_only=True, lexer=PygmentsLexer(PythonLexer), dont_extend_height=True)
-        self.messages.children.append(
-            HSplit(
-                [
-                    header,
-                    ConditionalContainer(
-                        VSplit([Window(width=3), source]), filter=Condition(lambda: not cell["collapsed"])
-                    ),
-                ]
-            )
-        )
-        self.app.invalidate()
+    def _add_cell(self, number, summary, code, live=True):
+        self._flush_output()
+        self.cells[number] = {
+            "summary": summary,
+            "code": code,
+            "state": "●",
+            "started": monotonic() if live else None,
+            "ended": None,
+        }
+        self._print([("", "\n  "), ("class:cell", f"● cell {number} · {summary}"), ("", "\n"), *self._code_card(code)])
 
-    def _toggle_cell(self, number, event):
-        if event.event_type == MouseEventType.MOUSE_UP:
-            self.cells[number]["collapsed"] = not self.cells[number]["collapsed"]
-            self.follow_output = False
-            self.app.layout.focus(self.composer)
-            self.app.invalidate()
-
-    def _finish_cell(self, number, result):
-        self.cells[number]["state"] = "✗" if result.error else "✓"
+    def _finish_cell(self, number, result, final=True):
+        """Print the cell's error and its ✓/✗ line once; a cell that succeeded waits for core to confirm it."""
+        cell = self.cells[number]
+        if cell["state"] != "●":
+            return
+        self._flush_output()
+        if cell["ended"] is None:
+            cell["ended"] = monotonic()
+        if result.error and "\n" in result.error.strip():  # A one-line error is shown in the ✗ line alone.
+            self.pending["channel"] = "stderr"
+            self.pending["text"] += result.error.rstrip("\n") + "\n"
+            self._flush_output()
+        if not final:
+            return
+        cell["state"] = "✗" if result.error else "✓"
+        parts = [f"{cell['state']} cell {number}"]
+        if cell["started"] is not None:
+            parts.append(f"{cell['ended'] - cell['started']:.1f}s")
         if result.error:
-            self._append_output(result.error + "\n", "stderr")
+            parts.append(result.error.strip().splitlines()[-1])
+        self._print([("", "  "), ("class:error" if result.error else "class:ok", " · ".join(parts)), ("", "\n")])
         self.app.invalidate()
 
     def call_from_thread(self, callback, *args):
@@ -577,10 +440,12 @@ class Terminal:
         namespace.setdefault("var_docs", {})["terminal"] = (
             "Cell-owned UI; close and replace it without restarting core."
         )
+        if self.show_welcome:
+            self.call_from_thread(self._print_welcome)
         for number, cell in enumerate(namespace.get("history", [])):
             self.notebook.start_cell(number, cell["summary"], cell["code"])
             self.notebook.finish_cell(cell["error"], output=cell["output"])
-            self.call_from_thread(self._add_cell, number, cell["summary"], cell["code"])
+            self.call_from_thread(self._add_cell, number, cell["summary"], cell["code"], False)
             if cell["output"]:
                 self.call_from_thread(self._append_output, cell["output"])
             self.call_from_thread(self._finish_cell, number, CellResult(cell["output"], cell["error"]))
@@ -635,6 +500,9 @@ class Terminal:
         if self.create_response is not None and self.mind.client.responses.create == self._create_response:
             self.mind.client.responses.create = self.create_response
         if not self.closed.is_set():
+            flushed = self.call_from_thread(self._flush_output)  # Print the remaining output before the UI exits.
+            if self.thread is not current_thread():
+                wait([flushed], timeout=5)
             self.call_from_thread(self.app.exit)
         if self.thread is not None and self.thread is not current_thread():
             self.thread.join()
@@ -651,6 +519,7 @@ class Terminal:
             raise self.ui_error or KeyboardInterrupt
         if prompt:
             self.call_from_thread(self._append_text, str(prompt) + "\n")
+        self.call_from_thread(self._flush_output)  # Show a partial line, such as a question printed with end="".
         self.call_from_thread(self._set_state, "Waiting for input").result()
         text = self.inputs.get()
         if text is None:  # The UI closed while waiting.
@@ -712,8 +581,8 @@ class Terminal:
             cell["outputs"] = [item for item in cell["outputs"] if item["output_type"] != "error"]
             self.notebook.finish_cell(result.error, output=result.output)
             self.notebook.save(self.notebook_path)
-            if not self.closed.is_set():
-                self.call_from_thread(self._finish_cell, number, result)
+        if not self.closed.is_set():
+            self.call_from_thread(self._finish_cell, number, result)
 
     def _end_cell(self, execution):
         """Record IPython's result and close this bootstrap on quit or interruption."""
@@ -742,7 +611,8 @@ class Terminal:
             self.completed_cell = (number, result, slot)
         self.notebook.finish_cell(result.error, output=output)
         self.notebook.save(self.notebook_path)
-        self.call_from_thread(self._finish_cell, number, result)
+        # A failed or stopping cell is final; a successful one is confirmed when core has closed its slot.
+        self.call_from_thread(self._finish_cell, number, result, stopping or result.error is not None)
         self.call_from_thread(self._set_state, "Ended" if result.quit else "Ready")
         if stopping:
             self.close()
@@ -787,3 +657,25 @@ class Terminal:
             raise RuntimeError("Model stream ended without a final response.")
         finally:
             self.call_from_thread(self._model_event, "end")
+
+
+def _fit(fragments, width):
+    """Clip a line of fragments to `width` terminal cells, marking a cut with an ellipsis, and pad the rest."""
+    total = sum(get_cwidth(text) for _, text in fragments)
+    limit = width if total <= width else width - 1
+    clipped, used = [], 0
+    for style, text in fragments:
+        kept = ""
+        for char in text:
+            if used + get_cwidth(char) > limit:
+                break
+            kept += char
+            used += get_cwidth(char)
+        if kept:
+            clipped.append((style, kept))
+        if len(kept) < len(text):
+            break
+    if total > width:
+        clipped.append(("class:frame", "…"))
+        used += 1
+    return [*clipped, ("", " " * (width - used))]
