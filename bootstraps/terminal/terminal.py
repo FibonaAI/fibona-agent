@@ -115,11 +115,12 @@ class Terminal:
         self.cell_buffer = None
         self.attached = False
         self.previous_excepthook = shell.sys_excepthook if sys.excepthook == shell.excepthook else sys.excepthook
-        # call_llm_api is the bound Mind.query; recover the Mind to show model progress. None outside a core session.
         self.show_welcome = not shell.user_ns.get("history", [])
         # Conversation rows printed on the screen; a replacement UI starts below a screen that is already full.
         self.printed_rows = 0 if self.show_welcome else sys.maxsize
-        self.mind = getattr(shell.user_ns.get("call_llm_api"), "__self__", None)
+        # Unwrap the logging partial to recover Mind.query for model progress.
+        query = shell.user_ns.get("call_llm_api")
+        self.mind = getattr(getattr(query, "func", query), "__self__", None)
         self.model = self.mind.model if self.mind is not None else "Python"
         self.create_response = self.mind.client.responses.create if self.mind is not None else None
         self.composer = TextArea(
