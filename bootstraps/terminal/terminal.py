@@ -6,6 +6,7 @@ import base64
 import inspect
 import io
 import os
+import signal
 import subprocess
 import sys
 import traceback
@@ -13,7 +14,7 @@ from collections import deque
 from functools import partial
 from pathlib import Path
 from queue import Queue
-from threading import Event, Thread, current_thread
+from threading import Event, Thread, current_thread, main_thread
 from time import monotonic
 from uuid import uuid4
 
@@ -39,6 +40,8 @@ from pygments.styles.monokai import MonokaiStyle
 
 from bootstraps.terminal.notebook import Notebook
 from core.env import CellResult, Quit
+
+STOPPED = "Stopped by the user."  # The message a stopped cell's error ends with (see init.py).
 
 TERMINAL_INSTRUCTIONS = """
 `terminal` is a live Python UI object created by the bootstrap cell. Core runs in the caller's thread; the UI runs in its own thread.
@@ -166,6 +169,12 @@ class Terminal:
                 self.selection_anchor = self.selection_cursor = None
                 self.app.invalidate()
                 return
+            if self.status.startswith("Running") and callable(signal.getsignal(signal.SIGUSR1)):
+                # The bootstrap's stop: the running cell ends and the run waits for the user. Pressed again
+                # while "Stopping", for a cell stuck in native code, Ctrl+C quits.
+                signal.pthread_kill(main_thread().ident, signal.SIGUSR1)
+                self._set_state("Stopping")
+                return
             self.user_quit = True
             self.app.exit()
 
@@ -268,10 +277,10 @@ class Terminal:
 
     def _keys_text(self):
         width = self.app.output.get_size().columns - 6
-        full = "Enter send · Alt+Enter newline · Drag to copy · Ctrl+C quit"
+        full = "Enter send · Alt+Enter newline · Drag to copy · Ctrl+C stop/quit"
         if len(full) <= width:
             return full
-        short = "Enter send · Ctrl+C quit"
+        short = "Enter send · Ctrl+C stop/quit"
         return short if len(short) <= width else "Enter · Ctrl+C"
 
     def _body_height(self):
@@ -542,9 +551,10 @@ class Terminal:
             self.app.invalidate()
 
     def _finish_cell(self, number, result):
-        self.cells[number]["state"] = "✗" if result.error else "✓"
+        stopped = _stopped(result.error)
+        self.cells[number]["state"] = "■" if stopped else "✗" if result.error else "✓"
         if result.error:
-            self._append_output(result.error + "\n", "stderr")
+            self._append_output((STOPPED if stopped else result.error) + "\n", "stderr")
         self.app.invalidate()
 
     def call_from_thread(self, callback, *args):
@@ -668,7 +678,8 @@ class Terminal:
             previous = namespace["history"][-1]
             self._confirm_cell(CellResult(previous["output"], previous["error"]))
         if number and namespace["history"][-1]["error"]:
-            self.next_summary = "Repair the failed cell."
+            stopped = _stopped(namespace["history"][-1]["error"])
+            self.next_summary = "Wait for the user after a stop." if stopped else "Repair the failed cell."
         self.current_cell = (number, self.next_summary, info.raw_cell)
         self._record_cell(*self.current_cell)
         self.previous_io = (sys.stdout, sys.stderr, namespace["input"])
@@ -759,13 +770,13 @@ class Terminal:
         elif kind == "delta":
             self.token_samples.append((monotonic(), self.token_samples[-1][1] + delta))
         else:
-            self.model_requests -= 1
+            self.model_requests = max(0, self.model_requests - 1)  # A stop can end a request before its start.
         self.app.invalidate()
 
     def _create_response(self, **params):
         """Show streamed progress while preserving the model's complete response and host tool calls."""
-        self.call_from_thread(self._model_event, "start")
         try:
+            self.call_from_thread(self._model_event, "start")
             with self.create_response(**{**params, "stream": True}) as stream:
                 for event in stream:
                     if event.type in {
@@ -787,3 +798,8 @@ class Terminal:
             raise RuntimeError("Model stream ended without a final response.")
         finally:
             self.call_from_thread(self._model_event, "end")
+
+
+def _stopped(error):
+    """Whether a cell's error is a stop rather than a failure."""
+    return bool(error) and error.rstrip().endswith(STOPPED)
