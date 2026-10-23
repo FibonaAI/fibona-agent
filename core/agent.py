@@ -301,8 +301,7 @@ Repair the failure and continue the program.
         on_result receives each cell's final validated result, including the cell that quits.
         The configured cwd must exist; the caller's working directory is restored afterward.
         With debug=True, cells and call_me calls are logged to agent.log in that directory.
-        Interruptions propagate. A cell stopped with SIGUSR1 (see IPythonEnv) is recorded with its error, and the
-        next cell waits for the user's message before waking the mind.
+        Interruptions propagate.
         Cells execute synchronously in the calling thread.
         """
         with chdir(self.cwd or Path.cwd()):
@@ -345,9 +344,6 @@ Repair the failure and continue the program.
                 if result.error is None:
                     code, summary = slot.code, slot.summary
                     continue
-                if result.stopped:
-                    code, summary = _stopped_cell(), "Wait for the user after a stop."
-                    continue
                 # Side effects of the failed cell are not rolled back; the mind repairs from here.
                 message = (
                     self.REPAIR
@@ -358,15 +354,6 @@ Repair the failure and continue the program.
                 )
                 # The recovery cell: wakes the mind with the failure so it can submit a repaired next cell.
                 code, summary = _wake_cell(message), "Repair the failed cell."
-
-
-def _stopped_cell() -> str:
-    """After a stop: wait for the user, then wake the mind with their message instead of repairing."""
-    message = (
-        "The user stopped the previous cell partway; its side effects are not rolled back "
-        "(record in history, state in globals()). Their message follows.\n\n"
-    )
-    return f"response = call_me(input={message!r} + input())\nprint(response.output_text)"
 
 
 def _wake_cell(message: str) -> str:

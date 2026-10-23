@@ -39,7 +39,9 @@ from pygments.lexers import PythonLexer
 from pygments.styles.monokai import MonokaiStyle
 
 from bootstraps.terminal.notebook import Notebook
-from core.env import STOPPED, CellResult, Quit, Stop
+from core.env import CellResult, Quit
+
+STOPPED = "Stopped by the user."  # The message a stopped cell's error ends with (see init.py).
 
 TERMINAL_INSTRUCTIONS = """
 `terminal` is a live Python UI object created by the bootstrap cell. Core runs in the caller's thread; the UI runs in its own thread.
@@ -167,9 +169,9 @@ class Terminal:
                 self.selection_anchor = self.selection_cursor = None
                 self.app.invalidate()
                 return
-            if self.status.startswith("Running"):
-                # Core's stop: the running cell ends and the run waits for the user. Pressed again while
-                # "Stopping", for a cell stuck in native code, Ctrl+C quits.
+            if self.status.startswith("Running") and callable(signal.getsignal(signal.SIGUSR1)):
+                # The bootstrap's stop: the running cell ends and the run waits for the user. Pressed again
+                # while "Stopping", for a cell stuck in native code, Ctrl+C quits.
                 signal.pthread_kill(main_thread().ident, signal.SIGUSR1)
                 self._set_state("Stopping")
                 return
@@ -549,9 +551,10 @@ class Terminal:
             self.app.invalidate()
 
     def _finish_cell(self, number, result):
-        self.cells[number]["state"] = "■" if result.stopped else "✗" if result.error else "✓"
+        stopped = _stopped(result.error)
+        self.cells[number]["state"] = "■" if stopped else "✗" if result.error else "✓"
         if result.error:
-            self._append_output(result.error + "\n", "stderr")
+            self._append_output((STOPPED if stopped else result.error) + "\n", "stderr")
         self.app.invalidate()
 
     def call_from_thread(self, callback, *args):
@@ -590,7 +593,7 @@ class Terminal:
             self.call_from_thread(self._add_cell, number, cell["summary"], cell["code"])
             if cell["output"]:
                 self.call_from_thread(self._append_output, cell["output"])
-            self.call_from_thread(self._finish_cell, number, _recorded_result(cell))
+            self.call_from_thread(self._finish_cell, number, CellResult(cell["output"], cell["error"]))
         self.shell.events.register("pre_run_cell", self._begin_cell)
         self.shell.events.register("post_run_cell", self._end_cell)
         self.attached = True
@@ -667,23 +670,15 @@ class Terminal:
     def _begin_cell(self, info):
         """Use IPython's cell source and the existing model submission callback for UI metadata."""
         namespace = self.shell.user_ns
-        history = namespace.get("history", [])
-        number = len(history)
+        number = len(namespace.get("history", []))
         if self.completed_cell is not None and number:
-            completed, _, slot = self.completed_cell
+            _, _, slot = self.completed_cell
             if slot is not None:
                 self.next_summary = slot.summary
-            # By number: a stop can leave cells after it that never ran, so history[-1] may not be this cell.
-            self._confirm_cell(_recorded_result(history[completed]))
-        # Cells core stopped before they ran never reached IPython's events; show them from history.
-        for skipped in range(self.current_cell[0] + 1 if self.current_cell else number, number):
-            cell = history[skipped]
-            self.notebook.start_cell(skipped, cell["summary"], cell["code"])
-            self.notebook.finish_cell(cell["error"], output=cell["output"])
-            self.call_from_thread(self._add_cell, skipped, cell["summary"], cell["code"])
-            self.call_from_thread(self._finish_cell, skipped, _recorded_result(cell))
-        if number and history[-1]["error"]:
-            stopped = history[-1]["error"] == STOPPED
+            previous = namespace["history"][-1]
+            self._confirm_cell(CellResult(previous["output"], previous["error"]))
+        if number and namespace["history"][-1]["error"]:
+            stopped = _stopped(namespace["history"][-1]["error"])
             self.next_summary = "Wait for the user after a stop." if stopped else "Repair the failed cell."
         self.current_cell = (number, self.next_summary, info.raw_cell)
         self._record_cell(*self.current_cell)
@@ -747,14 +742,11 @@ class Terminal:
         error = execution.error_before_exec or execution.error_in_exec
         stopping = isinstance(error, (Quit, KeyboardInterrupt))
         output = self.cell_buffer.getvalue() if self.cell_buffer is not None else None
-        if isinstance(error, Stop):  # The user's stop: record it as core does, and the run goes on.
-            result = CellResult(output or "", STOPPED, stopped=True)
-        else:
-            result = CellResult(
-                output or "",
-                "".join(traceback.format_exception(error)) if error is not None and not stopping else None,
-                quit=stopping,
-            )
+        result = CellResult(
+            output or "",
+            "".join(traceback.format_exception(error)) if error is not None and not stopping else None,
+            quit=stopping,
+        )
         number = self.current_cell[0]
         if not stopping:
             # Submissions remain valid until core returns from IPython and closes the slot.
@@ -808,6 +800,6 @@ class Terminal:
             self.call_from_thread(self._model_event, "end")
 
 
-def _recorded_result(cell):
-    """The CellResult of a history record."""
-    return CellResult(cell["output"], cell["error"], stopped=cell["error"] == STOPPED)
+def _stopped(error):
+    """Whether a cell's error is a stop rather than a failure."""
+    return bool(error) and error.rstrip().endswith(STOPPED)
