@@ -145,7 +145,10 @@ class IPythonEnv:
         self.bind(input=self.read_input)  # Rebound every cell, so a cell that replaced `input` does not persist.
         stdout = Tee(buffer) if self.stdout is None else Tee(self.stdout, buffer)
         stderr = Tee(buffer) if self.stderr is None else Tee(self.stderr, buffer)
-        if threading.current_thread() is threading.main_thread():  # Python runs signal handlers there only.
+        # Python runs signal handlers on the main thread only, and signal.signal() raises ValueError elsewhere.
+        # A host using core as a library may run the agent on a worker thread (keeping the main thread for its
+        # own event loop); its cells still run, and a stop takes effect at the next cell.
+        if threading.current_thread() is threading.main_thread():
             signal.signal(signal.SIGUSR1, self._raise_stop)
             self.cell_running = True
         try:
