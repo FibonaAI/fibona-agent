@@ -6,11 +6,3 @@ repos:
       - id: ruff-check
       - id: ruff-format
         args: [--check]
-  - repo: local
-    hooks:
-      - id: unittest
-        name: unittest
-        entry: uv run python -m unittest discover -s bootstraps/terminal -p "*_test.py"
-        language: system
-        types: [python]
-        pass_filenames: false

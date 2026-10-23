@@ -123,7 +123,7 @@ Enable Ruff checks before each commit:
 uv run pre-commit install
 ```
 
-The hooks run Ruff lint and format checks on staged files, and the tests (`*_test.py`) when Python files change. Errors block the commit.
+The hooks run Ruff lint and format checks on staged files. Errors block the commit.
 
 To check all tracked files manually:
 
