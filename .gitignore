@@ -19,3 +19,7 @@ agent.log
 
 # Local test artifacts
 /tmp/
+
+# Harbor eval outputs
+/eval/jobs/
+/eval/python/
