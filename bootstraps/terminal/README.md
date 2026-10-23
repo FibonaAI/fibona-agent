@@ -24,8 +24,8 @@ uv run --env-file .env fibona.py --boot-mode terminal
 
 The welcome screen waits for a task before any model call. Press **Enter** to send and **Alt+Enter** for a newline. Later `input()` calls use the same input box. User-facing dialogue is printed by the chosen cells.
 
-Click cell titles to expand or collapse highlighted source, and use the mouse wheel to scroll history. Drag to select text; releasing the mouse copies it. **Ctrl+C** copies an active selection; while a cell runs it stops the cell, and the agent waits for your next message. Otherwise, or pressed again while stopping, it exits.
+The conversation is printed into the terminal's own scrollback, so scrolling, selecting and copying work as in any shell; cell source is kept in the notebook. While a cell runs, **Ctrl+C** stops it and the agent waits for your next message. Otherwise, or pressed again while stopping, it exits.
 
-Cells, outputs and errors are saved to `~/.fibona/<session_id>/session.ipynb`. Click the `notebook` file link in the status bar to open it with the system's default application.
+Cells, outputs and errors are saved to `~/.fibona/<session_id>/session.ipynb`. The `notebook` link in the status bar opens it in terminals that support links.
 
 The current directory is the workspace. Cells and model calls are recorded automatically in a separate `logs/<timestamp>-<run-id>.jsonl` file for each run.
