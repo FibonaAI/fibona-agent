@@ -17,11 +17,10 @@ from uuid import uuid4
 
 from IPython.core.interactiveshell import InteractiveShell
 from prompt_toolkit.application import Application, run_in_terminal
-from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.input import create_input
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import ConditionalContainer, HSplit, Layout, VSplit, Window, WindowAlign
+from prompt_toolkit.layout import HSplit, Layout, VSplit, Window, WindowAlign
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.output import ColorDepth, create_output
 from prompt_toolkit.renderer import print_formatted_text
@@ -118,6 +117,8 @@ class Terminal:
         self.previous_excepthook = shell.sys_excepthook if sys.excepthook == shell.excepthook else sys.excepthook
         # call_llm_api is the bound Mind.query; recover the Mind to show model progress. None outside a core session.
         self.show_welcome = not shell.user_ns.get("history", [])
+        # Conversation rows printed on the screen; a replacement UI starts below a screen that is already full.
+        self.printed_rows = 0 if self.show_welcome else sys.maxsize
         self.mind = getattr(shell.user_ns.get("call_llm_api"), "__self__", None)
         self.model = self.mind.model if self.mind is not None else "Python"
         self.create_response = self.mind.client.responses.create if self.mind is not None else None
@@ -180,18 +181,11 @@ class Terminal:
                         Window(width=2),
                         HSplit(
                             [
-                                ConditionalContainer(
-                                    HSplit(
-                                        [
-                                            Window(height=1),
-                                            Window(
-                                                FormattedTextControl(self._welcome_text),
-                                                height=self._body_height,
-                                                align=WindowAlign.CENTER,
-                                            ),
-                                        ]
-                                    ),
-                                    filter=Condition(lambda: self.show_welcome),
+                                # The rows the printed conversation leaves free, so the composer stays at the bottom.
+                                Window(
+                                    FormattedTextControl(lambda: self._welcome_text() if self.show_welcome else ""),
+                                    height=lambda: max(0, self._body_height() + 1 - self.printed_rows),
+                                    align=WindowAlign.CENTER,
                                 ),
                                 Window(height=1),
                                 HSplit(
@@ -367,7 +361,9 @@ class Terminal:
             else "FIBONA"
         )
         padding = max(0, (self._body_height() - len(logo.splitlines()) - 2) // 2)
-        return FormattedText([("class:logo", "\n" * padding + logo), ("class:notice", "\n\nEnter a task to begin.")])
+        return FormattedText(
+            [("class:logo", "\n" * (padding + 1) + logo), ("class:notice", "\n\nEnter a task to begin.")]
+        )
 
     def _body_height(self):
         return max(1, self.app.output.get_size().rows - self._composer_height() - 6)
@@ -381,6 +377,7 @@ class Terminal:
                 self.app.output, FormattedText(fragments), self.app.style, color_depth=self.app.color_depth
             )
             self.app.output.flush()
+            self.printed_rows += sum(text.count("\n") for _, text in fragments)  # Each row fills the width exactly.
 
     async def _flush_pending(self):
         while True:
