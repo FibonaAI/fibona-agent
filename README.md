@@ -85,7 +85,7 @@ Requires Python 3.12+ and `uv`.
      uv run --env-file .env fibona.py --boot-mode ./your_custom_bootstrap.py
      ```
 
-Each run automatically records cells and model calls in `logs/<timestamp>-<run-id>.jsonl`.
+Each run automatically records cells and every model request, response, or error (including intermediate tool calls) in `logs/<timestamp>-<run-id>.jsonl`.
 
 ## Use the core as a library
 

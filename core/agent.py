@@ -2,15 +2,17 @@ import json
 import logging
 from collections.abc import Callable
 from contextlib import chdir
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from threading import Lock
+from uuid import uuid4
 
 from openai import OpenAI
 from openai.types.responses import Response, ResponseFunctionToolCall
 
 from core.env import CellResult, IPythonEnv, Quit
-from core.utils import log_wake, run_logger
+from core.utils import run_logger
 
 INSTRUCTIONS = """
 You are the Fibona agent.
@@ -135,8 +137,7 @@ class Mind:
     def __init__(self, client: OpenAI, model: str, instructions: str):
         self.client, self.model, self.instructions = client, model, instructions
 
-    @log_wake
-    def wake(self, input=(), *, submit: Submit, **body) -> Response:
+    def wake(self, input=(), *, submit: Submit, logger=None, **body) -> Response:
         """Wake the mind. Exposed to cells as `call_me`.
 
         input: a string or list of input items, passed positionally or by keyword; defaults to empty.
@@ -184,7 +185,20 @@ class Mind:
             include=list({*body.get("include", []), "reasoning.encrypted_content"}),
         )
         while True:
-            response = self.client.responses.create(**body, input=items)
+            request = {**body, "input": items}
+            metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_me"}
+            if logger is not None:
+                logger.info({"event": "model_request", **metadata, "request": request})
+            try:
+                response = self.client.responses.create(**request)
+            except BaseException as exc:
+                if logger is not None:
+                    logger.info(
+                        {"event": "model_error", **metadata, "error": {"type": type(exc).__name__, "message": str(exc)}}
+                    )
+                raise
+            if logger is not None:
+                logger.info({"event": "model_response", **metadata, "response": response})
             host = next(
                 (c for c in response.output if c.type == "function_call" and c.name == SET_NEXT_CELL["name"]), None
             )
@@ -198,7 +212,7 @@ class Mind:
             # Replay every output item, including encrypted reasoning, without server-side storage.
             items = [*items, *(item.model_dump(mode="json", exclude_none=True) for item in response.output), output]
 
-    def query(self, input, **params) -> str:
+    def query(self, input, *, logger=None, **params) -> str:
         """A plain model call used as a function (summarize, extract, classify, ...).
 
         No predefined agent instructions or host tool are added, so it cannot schedule a cell and is
@@ -210,7 +224,21 @@ class Mind:
         """
         params = {k: v for k, v in params.items() if k not in {"stream", "background", "previous_response_id"}}
         params.setdefault("model", self.model)
-        return self.client.responses.create(**{**params, "store": False}, input=_input_items(input)).output_text
+        request = {**params, "store": False, "input": _input_items(input)}
+        metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_llm_api"}
+        if logger is not None:
+            logger.info({"event": "model_request", **metadata, "request": request})
+        try:
+            response = self.client.responses.create(**request)
+        except BaseException as exc:
+            if logger is not None:
+                logger.info(
+                    {"event": "model_error", **metadata, "error": {"type": type(exc).__name__, "message": str(exc)}}
+                )
+            raise
+        if logger is not None:
+            logger.info({"event": "model_response", **metadata, "response": response})
+        return response.output_text
 
 
 def _input_items(value) -> list:
@@ -319,10 +347,10 @@ Repair the failure and continue the program.
                 env.bind(
                     call_me=partial(
                         self.mind.wake,
-                        logger=cell_logger,
                         submit=slot.submit,
+                        logger=cell_logger,
                     ),
-                    call_llm_api=self.mind.query,
+                    call_llm_api=partial(self.mind.query, logger=cell_logger),
                     quit=quit_,
                     history=memory.snapshot(),
                 )
