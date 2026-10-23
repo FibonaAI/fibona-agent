@@ -28,4 +28,4 @@ Click cell titles to expand or collapse highlighted source, and use the mouse wh
 
 Cells, outputs and errors are saved to `~/.fibona/<session_id>/session.ipynb`. Click the `notebook` file link in the status bar to open it with the system's default application.
 
-The current directory is the workspace. Add `--debug` to record cells and model calls in `agent.log`.
+The current directory is the workspace. Cells and model calls are recorded automatically in a separate `logs/<timestamp>-<run-id>.jsonl` file for each run.

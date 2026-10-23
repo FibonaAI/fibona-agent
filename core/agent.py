@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import Callable
 from contextlib import chdir
 from functools import partial
@@ -9,7 +10,7 @@ from openai import OpenAI
 from openai.types.responses import Response, ResponseFunctionToolCall
 
 from core.env import CellResult, IPythonEnv, Quit
-from core.utils import create_run_log, log_wake
+from core.utils import log_wake, run_logger
 
 INSTRUCTIONS = """
 You are the Fibona agent.
@@ -237,7 +238,7 @@ class Memory:
         self.history = []  # One {code, summary, output, error} dict per finished cell.
 
     @property
-    def cells(self) -> int:
+    def cell_count(self) -> int:
         """Number of finished cells, which is also the number of the running one."""
         return len(self.history)
 
@@ -291,7 +292,6 @@ Repair the failure and continue the program.
         env: IPythonEnv | None = None,
         on_cell: Callable[[int, str, str], None] | None = None,
         on_result: Callable[[int, CellResult], None] | None = None,
-        debug: bool = False,
     ) -> None:
         """Execute bootstrap_cell verbatim, then run the cells selected by its program.
 
@@ -300,13 +300,11 @@ Repair the failure and continue the program.
         Without them, the agent runs with captured output and no user input.
         on_result receives each cell's final validated result, including the cell that quits.
         The configured cwd must exist; the caller's working directory is restored afterward.
-        With debug=True, cells and call_me calls are logged to agent.log in that directory.
+        Cells and call_me calls are automatically logged to a separate logs/*.jsonl file for each run.
         Interruptions propagate.
         Cells execute synchronously in the calling thread.
         """
-        with chdir(self.cwd or Path.cwd()):
-            log = create_run_log("agent.log", key=self.mind.client.api_key) if debug else None
-
+        with chdir(self.cwd or Path.cwd()), run_logger() as logger:
             env = env if env is not None else IPythonEnv()
             memory = Memory()
 
@@ -316,11 +314,12 @@ Repair the failure and continue the program.
             code, summary = bootstrap_cell, "Run the bootstrap cell."
             while True:
                 slot = Slot()
+                cell_logger = logging.LoggerAdapter(logger, {"cell": memory.cell_count})
                 # Restore runtime bindings each cell; mutations to shared objects still persist.
                 env.bind(
                     call_me=partial(
                         self.mind.wake,
-                        log=partial(log, "call_me", memory.cells) if log is not None else None,
+                        logger=cell_logger,
                         submit=slot.submit,
                     ),
                     call_llm_api=self.mind.query,
@@ -328,15 +327,13 @@ Repair the failure and continue the program.
                     history=memory.snapshot(),
                 )
                 if on_cell is not None:
-                    on_cell(memory.cells, summary, code)
-                result = env.execute(
-                    code, log=partial(log, "cell", memory.cells) if log is not None else None, summary=summary
-                )
+                    on_cell(memory.cell_count, summary, code)
+                result = env.execute(code, logger=cell_logger, summary=summary)
                 slot.close()
                 if not result.quit and result.error is None and slot.code is None:
                     result.error = "The cell finished without choosing a next cell via set_next_cell."
                 if on_result is not None:
-                    on_result(memory.cells, result)
+                    on_result(memory.cell_count, result)
                 if result.quit:
                     return
                 memory.record(code, summary, result)

@@ -19,7 +19,6 @@ def main() -> int:
     parser.add_argument(
         "--boot-mode", required=True, help="minimal, terminal, or a Python file to execute as the bootstrap cell."
     )
-    parser.add_argument("--debug", action="store_true", help="Record cells and model calls in agent.log.")
     args, remaining_args = parser.parse_known_args()
     bootstrap_file = (
         bootstrap_dir / args.boot_mode / "init.py"
@@ -37,7 +36,7 @@ def main() -> int:
             mind = Mind(client, os.getenv("FIBONA_MODEL", "gpt-6-astra"), INSTRUCTIONS)
             env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
             env.bind(argv=remaining_args)  # Arguments this launcher did not consume, for the bootstrap to read.
-            Agent(mind, cwd=".").run(bootstrap_cell, env=env, debug=args.debug)
+            Agent(mind, cwd=".").run(bootstrap_cell, env=env)
     except KeyboardInterrupt:
         return 130
     return 0
