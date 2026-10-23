@@ -46,13 +46,17 @@ def run_logger():
         handler.close()
 
 
+def log_event(logger, event, **data):
+    if logger is not None:
+        logger.info({"event": event, **data})
+
+
 def log_cell(execute):
     """Record a cell before execution, including cells that fail or are interrupted."""
 
     @wraps(execute)
     def wrapped(self, code, *, logger=None, summary=""):
-        if logger is not None:
-            logger.info({"event": "cell", "summary": summary, "code": code})
+        log_event(logger, "cell", summary=summary, code=code)
         return execute(self, code)
 
     return wrapped
