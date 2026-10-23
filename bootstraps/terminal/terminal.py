@@ -388,8 +388,7 @@ class Terminal:
     def _add_cell(self, number, summary, code):
         self._end_output()
         self._separate()
-        # ▶: the full-screen UI expanded cell source here; the scrollback keeps the title, the notebook the source.
-        for chunk in _wrap(f"▶ ● cell {number} · {summary}", self._width()):
+        for chunk in _wrap(f"● cell {number} · {summary}", self._width()):
             self._emit_row(("class:cell", chunk))
 
     def _finish_cell(self, number, result):
