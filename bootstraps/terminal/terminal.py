@@ -2,16 +2,13 @@
 
 import asyncio
 import atexit
-import base64
 import inspect
 import io
 import os
 import signal
-import subprocess
 import sys
 import traceback
 from collections import deque
-from functools import partial
 from pathlib import Path
 from queue import Queue
 from threading import Event, Thread, current_thread, main_thread
@@ -19,24 +16,17 @@ from time import monotonic
 from uuid import uuid4
 
 from IPython.core.interactiveshell import InteractiveShell
-from prompt_toolkit.application import Application
-from prompt_toolkit.clipboard import ClipboardData
-from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import FormattedText, fragment_list_to_text
+from prompt_toolkit.application import Application, run_in_terminal
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.input import create_input
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import ConditionalContainer, HSplit, Layout, ScrollablePane, VSplit, Window, WindowAlign
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
-from prompt_toolkit.layout.screen import Char
-from prompt_toolkit.lexers import PygmentsLexer
-from prompt_toolkit.mouse_events import MouseButton, MouseEventType
+from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
+from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.output import ColorDepth, create_output
-from prompt_toolkit.styles import Style, merge_styles
-from prompt_toolkit.styles.pygments import style_from_pygments_cls
+from prompt_toolkit.renderer import print_formatted_text
+from prompt_toolkit.styles import Style
 from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import TextArea
-from pygments.lexers import PythonLexer
-from pygments.styles.monokai import MonokaiStyle
 
 from bootstraps.terminal.notebook import Notebook
 from core.env import CellResult, Quit
@@ -49,7 +39,7 @@ Use terminal.call_from_thread(callback, *args) to change live widgets or app.lay
 The UI implementation is in source_code['bootstraps/terminal/terminal.py']. You can redefine it in a cell, not just edit its file.
 To replace the UI, call terminal.close(), define your replacement, then start it with get_ipython().
 The terminal bootstrap uses IPython pre_run_cell/post_run_cell events and standard Python streams for its I/O and cell records.
-input() receives text from the composer and print() writes to its message area. Closing a UI does not end the agent.
+input() receives text from the composer and print() writes into the terminal's scrollback above it. Closing a UI does not end the agent.
 Use print() in the chosen cell for user-facing dialogue, including questions before input().
 Do not print call_me response text: it is returned to the calling cell, and the chosen cell delivers the reply.
 Do not repeat a greeting or question across a model reply and the next cell's output.
@@ -69,7 +59,7 @@ class EventStream(io.TextIOBase):
                 if not stream.isatty():
                     stream.write(text)
             self.terminal.notebook.output(self.channel, text)
-            self.terminal.call_from_thread(self.terminal._append_output, text, self.channel)
+            self.terminal._emit(("class:error" if self.channel == "stderr" else "", text))
         return len(text)
 
     def flush(self):
@@ -78,23 +68,15 @@ class EventStream(io.TextIOBase):
                 stream.flush()
 
 
-class SelectableBody(HSplit):
-    """Paint mouse-selected text after the conversation's source and output windows."""
-
-    def __init__(self, terminal, children):
-        super().__init__(children)
-        self.terminal = terminal
-
-    def write_to_screen(self, screen, mouse_handlers, write_position, parent_style, erase_bg, z_index):
-        # ScrollablePane's default cells must not override a child's card background.
-        super().write_to_screen(screen, mouse_handlers, write_position, "", erase_bg, z_index)
-        screen.draw_with_z_index(1, partial(self.terminal._paint_body, screen))
-
-
 class Terminal:
-    """Attach to the existing IPython session; the cell owns this UI and its thread."""
+    """Attach to the existing IPython session; the cell owns this UI and its thread.
+
+    The conversation is printed once into the terminal's own scrollback, so scrolling, selection and copying are
+    the terminal's, and a frame only redraws the composer and status bar, whatever the history length.
+    """
 
     instructions = TERMINAL_INSTRUCTIONS
+    FLUSH_INTERVAL = 0.1  # Seconds between batched prints of cell output; one print per write would redraw per write.
     LOGO = """███████╗██╗██████╗  ██████╗ ███╗   ██╗ █████╗
 ██╔════╝██║██╔══██╗██╔═══██╗████╗  ██║██╔══██╗
 █████╗  ██║██████╔╝██║   ██║██╔██╗ ██║███████║
@@ -116,6 +98,8 @@ class Terminal:
         self.started = monotonic()
         self.model_requests = 0
         self.token_samples = deque()
+        self.pending = deque()  # (style, text) fragments waiting to be printed; appended from any thread.
+        self.cell_started = monotonic()
         self.thread = None
         self.previous_io = None
         self.cell_slot = None
@@ -132,15 +116,6 @@ class Terminal:
         self.mind = getattr(shell.user_ns.get("call_llm_api"), "__self__", None)
         self.model = self.mind.model if self.mind is not None else "Python"
         self.create_response = self.mind.client.responses.create if self.mind is not None else None
-        self.show_welcome = not shell.user_ns.get("history", [])
-        self.cells = {}
-        self.output_block = None
-        self.follow_output = True
-        self.selection_anchor = self.selection_cursor = self.drag_start = None
-        self.messages = HSplit([], padding=1)
-        self.timeline = ScrollablePane(
-            self.messages, show_scrollbar=False, keep_cursor_visible=False, keep_focused_window_visible=False
-        )
         self.composer = TextArea(
             multiline=True,
             height=self._composer_height,
@@ -153,7 +128,7 @@ class Terminal:
         def submit(event):
             text = self.composer.text
             if text.strip() and self.status == "Waiting for input":
-                self._append_user(text)
+                self._emit(("class:user", "\u203a " + text + "\n"))
                 self.composer.text = ""
                 self._set_state("Running")
                 self.inputs.put(text)
@@ -164,11 +139,6 @@ class Terminal:
 
         @self.keys.add("c-c")
         def quit_ui(event):
-            if self.selection_anchor != self.selection_cursor:
-                self._copy_text(self._selected_text())
-                self.selection_anchor = self.selection_cursor = None
-                self.app.invalidate()
-                return
             if self.status.startswith("Running") and callable(signal.getsignal(signal.SIGUSR1)):
                 # The bootstrap's stop: the running cell ends and the run waits for the user. Pressed again
                 # while "Stopping", for a cell stuck in native code, Ctrl+C quits.
@@ -198,14 +168,6 @@ class Terminal:
             height=1,
         )
         keys = Window(FormattedTextControl(self._keys_text), height=1, style="class:notice")
-        welcome = Window(FormattedTextControl(self._welcome_text), align=WindowAlign.CENTER)
-        body = SelectableBody(
-            self,
-            [
-                ConditionalContainer(welcome, filter=Condition(lambda: self.show_welcome)),
-                ConditionalContainer(self.timeline, filter=Condition(lambda: not self.show_welcome)),
-            ],
-        )
         return Application(
             layout=Layout(
                 VSplit(
@@ -213,8 +175,6 @@ class Terminal:
                         Window(width=2),
                         HSplit(
                             [
-                                Window(height=1),
-                                body,
                                 Window(height=1),
                                 HSplit(
                                     [
@@ -228,45 +188,35 @@ class Terminal:
                             ]
                         ),
                         Window(width=2),
-                    ],
-                    style="class:background",
+                    ]
                 ),
                 focused_element=self.composer,
             ),
             key_bindings=self.keys,
-            full_screen=True,
-            mouse_support=True,
+            full_screen=False,
+            erase_when_done=True,  # A closed or replaced UI leaves only the conversation in the scrollback.
             color_depth=ColorDepth.TRUE_COLOR,
-            include_default_pygments_style=False,
-            style=merge_styles(
-                [
-                    style_from_pygments_cls(MonokaiStyle),
-                    Style.from_dict(
-                        {
-                            "": "bg:#20202e #d6d6dd",
-                            "background": "bg:#20202e #d6d6dd",
-                            "messages": "bg:#20202e #d6d6dd",
-                            "composer": "bg:#41414e #d6d6dd",
-                            "status": "#a4cea2",
-                            "model": "#ba94ed",
-                            "notebook": "#f0a6ca underline",
-                            "session": "#f0a6ca",
-                            "logo": "#78628f",
-                            "notice": "#9494a4",
-                            "user": "bg:#41414e #d6d6dd",
-                            "cell": "#ba94ed",
-                            "error": "#f18c8c",
-                            "speed": "#e5c07b",
-                            "selection": "bg:#695a80 #ffffff",
-                        }
-                    ),
-                ]
+            # Foreground accents only: the terminal's own background and text colors show through.
+            style=Style.from_dict(
+                {
+                    "composer": "bg:#41414e #d6d6dd",
+                    "status": "#a4cea2",
+                    "model": "#ba94ed",
+                    "notebook": "#f0a6ca underline",
+                    "session": "#f0a6ca",
+                    "logo": "#78628f",
+                    "notice": "#9494a4",
+                    "user": "bg:#41414e #d6d6dd",
+                    "cell": "#ba94ed",
+                    "error": "#f18c8c",
+                    "speed": "#e5c07b",
+                }
             ),
             input=input,
             output=output,
-            refresh_interval=0.1,
-            before_render=self._follow_scroll,
-            after_render=self._after_render,
+            refresh_interval=0.5,  # Status timers and token speed; content changes invalidate on their own.
+            min_redraw_interval=0.05,
+            after_render=lambda app: self.ready.set(),
         )
 
     def _composer_height(self):
@@ -277,156 +227,11 @@ class Terminal:
 
     def _keys_text(self):
         width = self.app.output.get_size().columns - 6
-        full = "Enter send · Alt+Enter newline · Drag to copy · Ctrl+C stop/quit"
+        full = "Enter send · Alt+Enter newline · Ctrl+C stop/quit"
         if len(full) <= width:
             return full
         short = "Enter send · Ctrl+C stop/quit"
         return short if len(short) <= width else "Enter · Ctrl+C"
-
-    def _body_height(self):
-        return max(1, self.app.output.get_size().rows - self._composer_height() - 6)
-
-    def _follow_scroll(self, app):
-        if not self.show_welcome:
-            width = max(1, app.output.get_size().columns - 4)
-            height = self.messages.preferred_height(width, sys.maxsize).preferred
-            self.timeline.max_available_height = max(height, self._body_height())
-            if self.follow_output:
-                self.timeline.vertical_scroll = max(0, height - self._body_height())
-
-    def _after_render(self, app):
-        # Keep clicks, wheel scrolling and text selection available while the composer has focus.
-        handlers = app.renderer.mouse_handlers.mouse_handlers
-        wrapped = {}
-        for y in range(app.output.get_size().rows):
-            for x in range(app.output.get_size().columns):
-                original = handlers[y][x]
-                if original not in wrapped:
-
-                    def handle(event, original=original):
-                        return self._handle_pointer(event, original)
-
-                    wrapped[original] = handle
-                handlers[y][x] = wrapped[original]
-        self.ready.set()
-
-    def _handle_pointer(self, event, original):
-        """Distinguish a title click from a drag, including releases outside the conversation."""
-        size = self.app.output.get_size()
-        inside = 2 <= event.position.x < size.columns - 2 and 1 <= event.position.y <= self._body_height()
-        if not inside and self.drag_start is None:
-            # FormattedTextControl counts OSC 8 escapes in fragment clicks; use the rendered link span.
-            char = self.app.renderer.last_rendered_screen.data_buffer[event.position.y][event.position.x]
-            if event.event_type == MouseEventType.MOUSE_UP and "class:notebook" in char.style.split():
-                return self._open_notebook(event)
-            return original(event)
-        point = (
-            min(self._body_height(), max(1, event.position.y)),
-            min(size.columns - 2, max(2, event.position.x)),
-        )
-        if event.event_type in {MouseEventType.SCROLL_UP, MouseEventType.SCROLL_DOWN}:
-            self.selection_anchor = self.selection_cursor = self.drag_start = None
-            width = max(1, size.columns - 4)
-            height = self.messages.preferred_height(width, self.timeline.max_available_height).preferred
-            maximum = max(0, height - self._body_height())
-            step = -3 if event.event_type == MouseEventType.SCROLL_UP else 3
-            self.timeline.vertical_scroll = min(maximum, max(0, self.timeline.vertical_scroll + step))
-            self.follow_output = self.timeline.vertical_scroll == maximum
-        elif event.event_type == MouseEventType.MOUSE_DOWN and event.button == MouseButton.LEFT:
-            self.selection_anchor = self.selection_cursor = self.drag_start = point
-        elif event.event_type == MouseEventType.MOUSE_MOVE and self.drag_start is not None:
-            self.selection_cursor = point
-            self.follow_output = False
-        elif event.event_type == MouseEventType.MOUSE_UP and self.drag_start is not None:
-            self.selection_cursor = point
-            self.drag_start = None
-            if self.selection_anchor != self.selection_cursor:
-                self._copy_text(self._selected_text())
-            else:
-                self.selection_anchor = self.selection_cursor = None
-                original(event)
-        else:
-            return original(event)
-        self.app.invalidate()
-        return None
-
-    def _selection_ranges(self):
-        if self.selection_anchor is None or self.selection_cursor is None:
-            return
-        start, end = sorted((self.selection_anchor, self.selection_cursor))
-        for y in range(start[0], end[0] + 1):
-            left = start[1] if y == start[0] else 2
-            right = end[1] if y == end[0] else self.app.output.get_size().columns - 2
-            yield y, left, right
-
-    def _paint_body(self, screen):
-        for y in range(1, 1 + self._body_height()):
-            for x in range(2, self.app.output.get_size().columns - 2):
-                char = screen.data_buffer[y][x]
-                if char.style.strip() in {"", "[transparent]"}:
-                    screen.data_buffer[y][x] = Char(char.char, "class:background")
-        for y, left, right in self._selection_ranges():
-            for x in range(left, right):
-                char = screen.data_buffer[y][x]
-                screen.data_buffer[y][x] = Char(char.char, char.style + " class:selection")
-
-    def _selected_text(self):
-        screen = self.app.renderer.last_rendered_screen
-        start, end = sorted((self.selection_anchor, self.selection_cursor))
-        for window, position in screen.visible_windows_to_write_positions.items():
-            info = window.render_info
-            if info is None or not all(
-                position.ypos <= y < position.ypos + position.height
-                and position.xpos <= x <= position.xpos + position.width
-                for y, x in (start, end)
-            ):
-                continue
-            # Copy logical lines within one source/output window, excluding UI padding and soft wraps.
-            lines = (
-                window.content.buffer.document.lines
-                if isinstance(window.content, BufferControl)
-                else [fragment_list_to_text(info.ui_content.get_line(row)) for row in range(info.ui_content.line_count)]
-            )
-            endpoints = []
-            for y, x in (start, end):
-                row, column = info.visible_line_to_row_col.get(y - position.ypos, (0, 0))
-                line = lines[row]
-                offset, width = x - position.xpos, 0
-                while column < len(line) and width + get_cwidth(line[column]) <= offset:
-                    width += get_cwidth(line[column])
-                    column += 1
-                endpoints.append((row, column))
-            (first_row, first_column), (last_row, last_column) = endpoints
-            lines = lines[first_row : last_row + 1]
-            lines[-1] = lines[-1][:last_column]
-            lines[0] = lines[0][first_column:]
-            return "\n".join(lines)
-        return "\n".join(
-            "".join(screen.data_buffer[y][x].char for x in range(left, right)).rstrip()
-            for y, left, right in self._selection_ranges()
-        )
-
-    def _copy_text(self, text):
-        """Copy selected text to the app, terminal clipboard and macOS pasteboard."""
-        if text:
-            self.app.clipboard.set_data(ClipboardData(text))
-            encoded = base64.b64encode(text.encode()).decode()
-            self.app.output.write_raw(f"\x1b]52;c;{encoded}\x07")
-            self.app.output.flush()
-            if sys.platform == "darwin":
-                subprocess.run(
-                    ["/usr/bin/pbcopy"], input=text.encode(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-
-    def _welcome_text(self):
-        size = self.app.output.get_size()
-        logo = (
-            self.LOGO
-            if size.columns - 4 >= max(map(len, self.LOGO.splitlines())) and self._body_height() >= 8
-            else "FIBONA"
-        )
-        padding = max(0, (self._body_height() - len(logo.splitlines()) - 2) // 2)
-        return FormattedText([("class:logo", "\n" * padding + logo), ("class:notice", "\n\nEnter a task to begin.")])
 
     def _speed_text(self):
         now = monotonic()
@@ -446,17 +251,18 @@ class Terminal:
         budget = max(1, self.app.output.get_size().columns - 6 - len(self._speed_text()))
         for part in [
             ("class:model", " · " + self.model),
-            ("class:notebook", " · notebook", self._open_notebook),
+            ("class:notebook", " · notebook"),
             ("class:session", " · " + self.session_id[:8]),
         ]:
             visible_width = sum(len(item[1]) for item in parts if "[ZeroWidthEscape]" not in item[0])
             if visible_width + len(part[1]) <= budget:
                 if part[0] == "class:notebook":
+                    # An OSC 8 link: the terminal opens the notebook on click.
                     parts.extend(
                         [
                             ("class:session", " · "),
                             ("[ZeroWidthEscape]", f"\x1b]8;;{self.notebook_path.as_uri()}\x1b\\"),
-                            ("class:notebook", "notebook", self._open_notebook),
+                            ("class:notebook", "notebook"),
                             ("[ZeroWidthEscape]", "\x1b]8;;\x1b\\"),
                         ]
                     )
@@ -464,98 +270,44 @@ class Terminal:
                     parts.append(part)
         return FormattedText(parts)
 
-    def _open_notebook(self, event):
-        if event.event_type == MouseEventType.MOUSE_UP:
-            if sys.platform == "win32":
-                os.startfile(self.notebook_path)
-            else:
-                opener = "open" if sys.platform == "darwin" else "xdg-open"
-                subprocess.Popen(
-                    [opener, str(self.notebook_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-                )
-
     def _set_state(self, state):
         self.status, self.started = state, monotonic()
         self.app.invalidate()
 
-    def _append_text(self, text):
-        self._append_output(text)
+    def _emit(self, *fragments):
+        """Queue formatted text for the scrollback from any thread; the UI thread prints it in batches."""
+        self.pending.extend(fragments)
 
-    def _text_window(self, text, style=""):
-        return Window(FormattedTextControl(text), wrap_lines=True, dont_extend_height=True, style=style)
-
-    def _append_user(self, text):
-        self.show_welcome = False
-        self.follow_output = True
-        self.selection_anchor = self.selection_cursor = self.drag_start = None
-        self.output_block = None
-        self.messages.children.append(
-            HSplit(
-                [
-                    Window(height=1),
-                    VSplit([Window(width=1), self._text_window("\u203a " + text), Window(width=1)]),
-                    Window(height=1),
-                ],
-                style="class:user",
+    def _print_pending(self):
+        fragments = []
+        while self.pending:
+            fragments.append(self.pending.popleft())
+        if fragments:
+            # ponytail: a trailing partial line is completed, so print(end="") progress splits across lines.
+            if not fragments[-1][1].endswith("\n"):
+                fragments.append(("", "\n"))
+            print_formatted_text(
+                self.app.output, FormattedText(fragments), self.app.style, color_depth=self.app.color_depth
             )
-        )
-        self.app.invalidate()
+            self.app.output.flush()
 
-    def _append_output(self, text, channel="stdout"):
-        self.show_welcome = False
-        if self.output_block is None or self.output_block["channel"] != channel:
-            block = {"text": "", "channel": channel}
-            self.output_block = block
-            window = self._text_window(lambda: block["text"].rstrip("\n"), "class:error" if channel == "stderr" else "")
-            self.messages.children.append(
-                ConditionalContainer(
-                    VSplit([Window(width=3), window]), filter=Condition(lambda: bool(block["text"].strip()))
-                )
-            )
-        self.output_block["text"] += text
-        self.app.invalidate()
+    async def _flush_pending(self):
+        while True:
+            if self.pending:
+                await run_in_terminal(self._print_pending)
+            await asyncio.sleep(self.FLUSH_INTERVAL)
 
     def _add_cell(self, number, summary, code):
-        self.output_block = None
-        cell = {"summary": summary, "code": code, "collapsed": True, "state": "●"}
-        self.cells[number] = cell
-        header = self._text_window(
-            lambda: FormattedText(
-                [
-                    (
-                        "class:error" if cell["state"] == "✗" else "class:cell",
-                        f"{'▶' if cell['collapsed'] else '▼'} {cell['state']} cell {number} · {cell['summary']}",
-                        partial(self._toggle_cell, number),
-                    )
-                ]
-            )
-        )
-        source = TextArea(text=code, read_only=True, lexer=PygmentsLexer(PythonLexer), dont_extend_height=True)
-        self.messages.children.append(
-            HSplit(
-                [
-                    header,
-                    ConditionalContainer(
-                        VSplit([Window(width=3), source]), filter=Condition(lambda: not cell["collapsed"])
-                    ),
-                ]
-            )
-        )
-        self.app.invalidate()
-
-    def _toggle_cell(self, number, event):
-        if event.event_type == MouseEventType.MOUSE_UP:
-            self.cells[number]["collapsed"] = not self.cells[number]["collapsed"]
-            self.follow_output = False
-            self.app.layout.focus(self.composer)
-            self.app.invalidate()
+        self.cell_started = monotonic()
+        self._emit(("", "\n"), ("class:cell", f"● cell {number} · {summary}\n"))
 
     def _finish_cell(self, number, result):
         stopped = _stopped(result.error)
-        self.cells[number]["state"] = "■" if stopped else "✗" if result.error else "✓"
         if result.error:
-            self._append_output((STOPPED if stopped else result.error) + "\n", "stderr")
-        self.app.invalidate()
+            self._emit(("class:error", (STOPPED if stopped else result.error).rstrip("\n") + "\n"))
+        mark = "■" if stopped else "✗" if result.error else "✓"
+        style = "class:cell" if mark == "✓" else "class:error"
+        self._emit((style, f"{mark} cell {number} · {monotonic() - self.cell_started:.1f}s\n"))
 
     def call_from_thread(self, callback, *args):
         """Run a UI callback on this app's thread and return a Future for its result."""
@@ -587,13 +339,13 @@ class Terminal:
         namespace.setdefault("var_docs", {})["terminal"] = (
             "Cell-owned UI; close and replace it without restarting core."
         )
-        for number, cell in enumerate(namespace.get("history", [])):
+        history = namespace.get("history", [])
+        if not history:
+            self._emit(("class:logo", self.LOGO + "\n"), ("class:notice", "\nEnter a task to begin.\n"))
+        # A replaced UI's conversation is already in the scrollback; only the notebook record restarts.
+        for number, cell in enumerate(history):
             self.notebook.start_cell(number, cell["summary"], cell["code"])
             self.notebook.finish_cell(cell["error"], output=cell["output"])
-            self.call_from_thread(self._add_cell, number, cell["summary"], cell["code"])
-            if cell["output"]:
-                self.call_from_thread(self._append_output, cell["output"])
-            self.call_from_thread(self._finish_cell, number, CellResult(cell["output"], cell["error"]))
         self.shell.events.register("pre_run_cell", self._begin_cell)
         self.shell.events.register("post_run_cell", self._end_cell)
         self.attached = True
@@ -605,10 +357,15 @@ class Terminal:
 
     def _run_ui(self):
         try:
-            self.app.run(handle_sigint=False, set_exception_handler=False)
+            self.app.run(
+                pre_run=lambda: self.app.create_background_task(self._flush_pending()),
+                handle_sigint=False,
+                set_exception_handler=False,
+            )
         except BaseException as error:
             self.ui_error = error
         finally:
+            self._print_pending()  # Output queued after the last batch, below the erased UI.
             self.closed.set()
             self.ready.set()
             self.inputs.put(None)
@@ -660,7 +417,7 @@ class Terminal:
         if self.closed.is_set():
             raise self.ui_error or KeyboardInterrupt
         if prompt:
-            self.call_from_thread(self._append_text, str(prompt) + "\n")
+            self._emit(("", str(prompt) + "\n"))
         self.call_from_thread(self._set_state, "Waiting for input").result()
         text = self.inputs.get()
         if text is None:  # The UI closed while waiting.
@@ -691,7 +448,7 @@ class Terminal:
         if self.cell_buffer is not None and self.cell_buffer.getvalue():
             prefix = self.cell_buffer.getvalue()
             self.notebook.output("stdout", prefix)
-            self.call_from_thread(self._append_output, prefix)
+            self._emit(("", prefix))
         self.cell_slot = namespace["call_me"].keywords["submit"].__self__  # The Slot core bound for this cell.
         namespace["input"] = self._read_input
         sys.stdout, sys.stderr = EventStream(self, "stdout", sys.stdout), EventStream(self, "stderr", sys.stderr)
@@ -711,7 +468,7 @@ class Terminal:
     def _record_cell(self, number, summary, code):
         self.notebook.start_cell(number, summary, code)
         self.notebook.save(self.notebook_path)
-        self.call_from_thread(self._add_cell, number, summary, code)
+        self._add_cell(number, summary, code)
         self.call_from_thread(self._set_state, f"Running · cell {number}")
 
     def _confirm_cell(self, result):
@@ -724,7 +481,7 @@ class Terminal:
             self.notebook.finish_cell(result.error, output=result.output)
             self.notebook.save(self.notebook_path)
             if not self.closed.is_set():
-                self.call_from_thread(self._finish_cell, number, result)
+                self._finish_cell(number, result)
 
     def _end_cell(self, execution):
         """Record IPython's result and close this bootstrap on quit or interruption."""
@@ -753,7 +510,7 @@ class Terminal:
             self.completed_cell = (number, result, slot)
         self.notebook.finish_cell(result.error, output=output)
         self.notebook.save(self.notebook_path)
-        self.call_from_thread(self._finish_cell, number, result)
+        self._finish_cell(number, result)
         self.call_from_thread(self._set_state, "Ended" if result.quit else "Ready")
         if stopping:
             self.close()
@@ -771,12 +528,13 @@ class Terminal:
             self.token_samples.append((monotonic(), self.token_samples[-1][1] + delta))
         else:
             self.model_requests = max(0, self.model_requests - 1)  # A stop can end a request before its start.
-        self.app.invalidate()
+        if kind != "delta":  # Token speed shows on the next timed refresh.
+            self.app.invalidate()
 
     def _create_response(self, **params):
         """Show streamed progress while preserving the model's complete response and host tool calls."""
         try:
-            self.call_from_thread(self._model_event, "start")
+            self._model_event("start")
             with self.create_response(**{**params, "stream": True}) as stream:
                 for event in stream:
                     if event.type in {
@@ -786,7 +544,7 @@ class Terminal:
                         "response.reasoning_summary_text.delta",
                     }:
                         # Rough token estimate: ~4 bytes per token.
-                        self.call_from_thread(self._model_event, "delta", len(event.delta.encode()) / 4)
+                        self._model_event("delta", len(event.delta.encode()) / 4)
                     elif event.type == "response.failed":
                         raise RuntimeError(
                             event.response.error.message if event.response.error else "Model request failed."
@@ -797,7 +555,7 @@ class Terminal:
                         raise RuntimeError(event.message)
             raise RuntimeError("Model stream ended without a final response.")
         finally:
-            self.call_from_thread(self._model_event, "end")
+            self._model_event("end")
 
 
 def _stopped(error):

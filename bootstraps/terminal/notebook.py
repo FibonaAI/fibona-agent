@@ -27,14 +27,18 @@ class Notebook:
         if not self.cells or not text:
             return
         outputs = self.cells[-1]["outputs"]
+        # A list while the cell writes keeps a flood of small writes linear; finish_cell joins it.
         if outputs and outputs[-1]["output_type"] == "stream" and outputs[-1]["name"] == channel:
-            outputs[-1]["text"] += text
+            outputs[-1]["text"].append(text)
         else:
-            outputs.append({"output_type": "stream", "name": channel, "text": text})
+            outputs.append({"output_type": "stream", "name": channel, "text": [text]})
 
     def finish_cell(self, error: str | None, *, output: str | None = None) -> None:
         """Complete the record using captured cell output, retaining matching live stream channels."""
         cell = self.cells[-1]
+        for item in cell["outputs"]:
+            if item["output_type"] == "stream" and isinstance(item["text"], list):
+                item["text"] = "".join(item["text"])
         if output is not None:
             recorded = "".join(item["text"] for item in cell["outputs"] if item["output_type"] == "stream")
             if recorded != output:
