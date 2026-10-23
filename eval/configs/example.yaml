@@ -1,0 +1,11 @@
+# Run with: make -C eval run CONFIG=configs/example.yaml
+run: tb2-example                # Job name; results go to eval/jobs/<run>. Rerun to resume.
+dataset: terminal-bench@2.0     # Harbor dataset, as `harbor run -d` takes it.
+model: openai/gpt-6-astra       # As `harbor run -m` takes it.
+hosts:                          # user@host: trials it runs at once. The sum is the concurrency; keep it within your API rate limit.
+  me@node1: 16
+  me@node2: 16
+# tasks: ["fix-*"]              # Task name globs; all tasks when omitted.
+# exclude: ["*-gpu"]            # Task name globs to skip.
+limit: 2                        # At most this many tasks; remove for a full run.
+# extra_args: ["--timeout-multiplier", "2"]   # Passed to `harbor run` as is.
