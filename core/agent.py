@@ -12,7 +12,7 @@ from openai import OpenAI
 from openai.types.responses import Response, ResponseFunctionToolCall
 
 from core.env import CellResult, IPythonEnv, Quit
-from core.utils import log_event, run_logger
+from core.utils import log_info, run_logger
 
 INSTRUCTIONS = """
 You are the Fibona agent.
@@ -187,13 +187,13 @@ class Mind:
         while True:
             request = {**body, "input": items}
             metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_me"}
-            log_event(logger, "model_request", **metadata, request=request)
+            log_info(logger, "model_request", **metadata, request=request)
             try:
                 response = self.client.responses.create(**request)
             except BaseException as exc:
-                log_event(logger, "model_error", **metadata, error={"type": type(exc).__name__, "message": str(exc)})
+                log_info(logger, "model_error", **metadata, error={"type": type(exc).__name__, "message": str(exc)})
                 raise
-            log_event(logger, "model_response", **metadata, response=response)
+            log_info(logger, "model_response", **metadata, response=response)
             host = next(
                 (c for c in response.output if c.type == "function_call" and c.name == SET_NEXT_CELL["name"]), None
             )
@@ -221,13 +221,13 @@ class Mind:
         params.setdefault("model", self.model)
         request = {**params, "store": False, "input": _input_items(input)}
         metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_llm_api"}
-        log_event(logger, "model_request", **metadata, request=request)
+        log_info(logger, "model_request", **metadata, request=request)
         try:
             response = self.client.responses.create(**request)
         except BaseException as exc:
-            log_event(logger, "model_error", **metadata, error={"type": type(exc).__name__, "message": str(exc)})
+            log_info(logger, "model_error", **metadata, error={"type": type(exc).__name__, "message": str(exc)})
             raise
-        log_event(logger, "model_response", **metadata, response=response)
+        log_info(logger, "model_response", **metadata, response=response)
         return response.output_text
 
 

@@ -46,7 +46,7 @@ def run_logger():
         handler.close()
 
 
-def log_event(logger, event, **data):
+def log_info(logger, event, **data):
     if logger is not None:
         logger.info({"event": event, **data})
 
@@ -56,7 +56,7 @@ def log_cell(execute):
 
     @wraps(execute)
     def wrapped(self, code, *, logger=None, summary=""):
-        log_event(logger, "cell", summary=summary, code=code)
+        log_info(logger, "cell", summary=summary, code=code)
         return execute(self, code)
 
     return wrapped
