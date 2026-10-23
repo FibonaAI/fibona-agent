@@ -17,10 +17,11 @@ from uuid import uuid4
 
 from IPython.core.interactiveshell import InteractiveShell
 from prompt_toolkit.application import Application, run_in_terminal
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.input import create_input
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
+from prompt_toolkit.layout import ConditionalContainer, HSplit, Layout, VSplit, Window, WindowAlign
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.output import ColorDepth, create_output
 from prompt_toolkit.renderer import print_formatted_text
@@ -59,7 +60,7 @@ class EventStream(io.TextIOBase):
                 if not stream.isatty():
                     stream.write(text)
             self.terminal.notebook.output(self.channel, text)
-            self.terminal._emit(("class:error" if self.channel == "stderr" else "", text))
+            self.terminal._emit_output(text, "class:error" if self.channel == "stderr" else "")
         return len(text)
 
     def flush(self):
@@ -77,6 +78,8 @@ class Terminal:
 
     instructions = TERMINAL_INSTRUCTIONS
     FLUSH_INTERVAL = 0.1  # Seconds between batched prints of cell output; one print per write would redraw per write.
+    MARGIN = "  "  # The layout's side margin, so printed messages line up with the composer.
+    OUTPUT_INDENT = MARGIN + "   "  # Cell output sits under its cell title.
     LOGO = """███████╗██╗██████╗  ██████╗ ███╗   ██╗ █████╗
 ██╔════╝██║██╔══██╗██╔═══██╗████╗  ██║██╔══██╗
 █████╗  ██║██████╔╝██║   ██║██╔██╗ ██║███████║
@@ -99,7 +102,8 @@ class Terminal:
         self.model_requests = 0
         self.token_samples = deque()
         self.pending = deque()  # (style, text) fragments waiting to be printed; appended from any thread.
-        self.cell_started = monotonic()
+        self.partial = ""  # Cell output after its last newline, printed once the line completes.
+        self.output_style, self.output_started, self.blank_lines = None, False, 0  # The output block being printed.
         self.thread = None
         self.previous_io = None
         self.cell_slot = None
@@ -113,6 +117,7 @@ class Terminal:
         self.attached = False
         self.previous_excepthook = shell.sys_excepthook if sys.excepthook == shell.excepthook else sys.excepthook
         # call_llm_api is the bound Mind.query; recover the Mind to show model progress. None outside a core session.
+        self.show_welcome = not shell.user_ns.get("history", [])
         self.mind = getattr(shell.user_ns.get("call_llm_api"), "__self__", None)
         self.model = self.mind.model if self.mind is not None else "Python"
         self.create_response = self.mind.client.responses.create if self.mind is not None else None
@@ -128,7 +133,7 @@ class Terminal:
         def submit(event):
             text = self.composer.text
             if text.strip() and self.status == "Waiting for input":
-                self._emit(("class:user", "\u203a " + text + "\n"))
+                self._emit_user(text)
                 self.composer.text = ""
                 self._set_state("Running")
                 self.inputs.put(text)
@@ -175,6 +180,19 @@ class Terminal:
                         Window(width=2),
                         HSplit(
                             [
+                                ConditionalContainer(
+                                    HSplit(
+                                        [
+                                            Window(height=1),
+                                            Window(
+                                                FormattedTextControl(self._welcome_text),
+                                                height=self._body_height,
+                                                align=WindowAlign.CENTER,
+                                            ),
+                                        ]
+                                    ),
+                                    filter=Condition(lambda: self.show_welcome),
+                                ),
                                 Window(height=1),
                                 HSplit(
                                     [
@@ -188,7 +206,8 @@ class Terminal:
                             ]
                         ),
                         Window(width=2),
-                    ]
+                    ],
+                    style="class:background",
                 ),
                 focused_element=self.composer,
             ),
@@ -196,9 +215,10 @@ class Terminal:
             full_screen=False,
             erase_when_done=True,  # A closed or replaced UI leaves only the conversation in the scrollback.
             color_depth=ColorDepth.TRUE_COLOR,
-            # Foreground accents only: the terminal's own background and text colors show through.
             style=Style.from_dict(
                 {
+                    "": "bg:#20202e #d6d6dd",
+                    "background": "bg:#20202e #d6d6dd",
                     "composer": "bg:#41414e #d6d6dd",
                     "status": "#a4cea2",
                     "model": "#ba94ed",
@@ -278,14 +298,85 @@ class Terminal:
         """Queue formatted text for the scrollback from any thread; the UI thread prints it in batches."""
         self.pending.extend(fragments)
 
+    def _width(self):
+        return max(1, self.app.output.get_size().columns - 2 * len(self.MARGIN))
+
+    def _emit_row(self, *fragments, indent=0):
+        """Queue one conversation row, padded across the terminal in the conversation's background."""
+        used = indent + sum(get_cwidth(text) for _, text in fragments)
+        # ponytail: rows are padded to the width at print time; resizing the terminal later leaves them as printed.
+        self._emit(
+            ("", self.MARGIN + " " * indent),
+            *fragments,
+            ("", " " * max(0, self._width() - used) + self.MARGIN + "\n"),
+        )
+
+    def _separate(self):
+        """A blank row before each conversation block, as the message list's padding and top margin did."""
+        self._emit_row()
+
+    def _emit_output(self, text, style=""):
+        """Queue complete lines of cell output; a partial line waits for its newline."""
+        if style != self.output_style:
+            self._end_output()
+            self.output_style = style
+        text = self.partial + text
+        cut = text.rfind("\n") + 1
+        self.partial = text[cut:]
+        if cut:
+            for line in text[: cut - 1].split("\n"):
+                self._emit_output_line(line)
+
+    def _emit_output_line(self, line):
+        # Blank lines wait for more text: a block shows only with text in it, without trailing blank lines.
+        if not line.strip():
+            self.blank_lines += 1
+            return
+        if not self.output_started:
+            self._separate()
+            self.output_started = True
+            self.show_welcome = False
+            self.app.invalidate()
+        for _ in range(self.blank_lines):
+            self._emit_row()
+        self.blank_lines = 0
+        for chunk in _wrap(line, self._width() - 3):
+            self._emit_row((self.output_style, chunk), indent=3)
+
+    def _end_output(self):
+        if self.partial:
+            self._emit_output_line(self.partial)
+            self.partial = ""
+        self.output_style, self.output_started, self.blank_lines = None, False, 0
+
+    def _emit_user(self, text):
+        """The user's message as a full-width block, like the composer it came from."""
+        self.show_welcome = False
+        self._end_output()
+        self._separate()
+        width = self._width()
+        rows = ["", *(chunk for line in ("\u203a " + text).split("\n") for chunk in _wrap(line, width - 2)), ""]
+        for row in rows:
+            self._emit_row(("class:user", f" {row}{' ' * (width - 1 - get_cwidth(row))}"))
+
+    def _welcome_text(self):
+        size = self.app.output.get_size()
+        logo = (
+            self.LOGO
+            if size.columns - 4 >= max(map(len, self.LOGO.splitlines())) and self._body_height() >= 8
+            else "FIBONA"
+        )
+        padding = max(0, (self._body_height() - len(logo.splitlines()) - 2) // 2)
+        return FormattedText([("class:logo", "\n" * padding + logo), ("class:notice", "\n\nEnter a task to begin.")])
+
+    def _body_height(self):
+        return max(1, self.app.output.get_size().rows - self._composer_height() - 6)
+
     def _print_pending(self):
         fragments = []
         while self.pending:
             fragments.append(self.pending.popleft())
         if fragments:
-            # ponytail: a trailing partial line is completed, so print(end="") progress splits across lines.
-            if not fragments[-1][1].endswith("\n"):
-                fragments.append(("", "\n"))
             print_formatted_text(
                 self.app.output, FormattedText(fragments), self.app.style, color_depth=self.app.color_depth
             )
@@ -293,21 +384,21 @@ class Terminal:
 
     async def _flush_pending(self):
         while True:
-            if self.pending:
+            if self.pending and not self.show_welcome:  # The welcome screen covers the conversation until it starts.
                 await run_in_terminal(self._print_pending)
             await asyncio.sleep(self.FLUSH_INTERVAL)
 
     def _add_cell(self, number, summary, code):
-        self.cell_started = monotonic()
-        self._emit(("", "\n"), ("class:cell", f"● cell {number} · {summary}\n"))
+        self._end_output()
+        self._separate()
+        # ▶: the full-screen UI expanded cell source here; the scrollback keeps the title, the notebook the source.
+        for chunk in _wrap(f"▶ ● cell {number} · {summary}", self._width()):
+            self._emit_row(("class:cell", chunk))
 
     def _finish_cell(self, number, result):
-        stopped = _stopped(result.error)
         if result.error:
-            self._emit(("class:error", (STOPPED if stopped else result.error).rstrip("\n") + "\n"))
-        mark = "■" if stopped else "✗" if result.error else "✓"
-        style = "class:cell" if mark == "✓" else "class:error"
-        self._emit((style, f"{mark} cell {number} · {monotonic() - self.cell_started:.1f}s\n"))
+            self._emit_output((STOPPED if _stopped(result.error) else result.error) + "\n", "class:error")
+            self._end_output()
 
     def call_from_thread(self, callback, *args):
         """Run a UI callback on this app's thread and return a Future for its result."""
@@ -340,8 +431,6 @@ class Terminal:
             "Cell-owned UI; close and replace it without restarting core."
         )
         history = namespace.get("history", [])
-        if not history:
-            self._emit(("class:logo", self.LOGO + "\n"), ("class:notice", "\nEnter a task to begin.\n"))
         # A replaced UI's conversation is already in the scrollback; only the notebook record restarts.
         for number, cell in enumerate(history):
             self.notebook.start_cell(number, cell["summary"], cell["code"])
@@ -365,6 +454,7 @@ class Terminal:
         except BaseException as error:
             self.ui_error = error
         finally:
+            self._end_output()
             self._print_pending()  # Output queued after the last batch, below the erased UI.
             self.closed.set()
             self.ready.set()
@@ -417,7 +507,7 @@ class Terminal:
         if self.closed.is_set():
             raise self.ui_error or KeyboardInterrupt
         if prompt:
-            self._emit(("", str(prompt) + "\n"))
+            self._emit_output(str(prompt) + "\n")
         self.call_from_thread(self._set_state, "Waiting for input").result()
         text = self.inputs.get()
         if text is None:  # The UI closed while waiting.
@@ -448,7 +538,7 @@ class Terminal:
         if self.cell_buffer is not None and self.cell_buffer.getvalue():
             prefix = self.cell_buffer.getvalue()
             self.notebook.output("stdout", prefix)
-            self._emit(("", prefix))
+            self._emit_output(prefix)
         self.cell_slot = namespace["call_me"].keywords["submit"].__self__  # The Slot core bound for this cell.
         namespace["input"] = self._read_input
         sys.stdout, sys.stderr = EventStream(self, "stdout", sys.stdout), EventStream(self, "stderr", sys.stderr)
@@ -556,6 +646,18 @@ class Terminal:
             raise RuntimeError("Model stream ended without a final response.")
         finally:
             self._model_event("end")
+
+
+def _wrap(line, width):
+    """Split a line into chunks of at most width terminal columns."""
+    chunk, used = "", 0
+    for char in line:
+        if used + get_cwidth(char) > width:
+            yield chunk
+            chunk, used = "", 0
+        chunk += char
+        used += get_cwidth(char)
+    yield chunk
 
 
 def _stopped(error):
