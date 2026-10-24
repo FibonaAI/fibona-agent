@@ -9,7 +9,7 @@ from threading import Lock
 from uuid import uuid4
 
 from openai import OpenAI
-from openai.types.responses import Response, ResponseFunctionToolCall
+from openai.types.responses import Response, ResponseFunctionToolCall, ResponseFunctionToolCallOutputItem
 
 from core.env import CellResult, IPythonEnv, Quit
 from core.utils import log_info, run_logger
@@ -140,6 +140,10 @@ class Mind:
     def wake(self, input=(), *, submit: Submit, logger=None, **body) -> Response:
         """Wake the mind. Exposed to cells as `call_me`.
 
+        The returned output contains every round's items and host tool results, in order.
+        Usage is summed across rounds; it is unknown if any round omits usage.
+        Other Response fields (id, status, etc.) describe the final API response.
+
         input: a string or list of input items, passed positionally or by keyword; defaults to empty.
         body: other keyword arguments of `client.responses.create`. Commonly used:
             tools: the caller's own tools; `set_next_cell` is always appended.
@@ -184,28 +188,58 @@ class Mind:
             # Without server-side storage, reasoning can only be replayed in its encrypted form.
             include=list({*body.get("include", []), "reasoning.encrypted_content"}),
         )
+        outputs = []
+        usage = None
+        usage_complete = True
+        metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_me"}
+        log_info(logger, "model_request", **metadata, request={**body, "input": items})
         while True:
             request = {**body, "input": items}
-            metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_me"}
-            log_info(logger, "model_request", **metadata, request=request)
             try:
                 response = self.client.responses.create(**request)
             except BaseException as exc:
-                log_info(logger, "model_error", **metadata, error={"type": type(exc).__name__, "message": str(exc)})
+                log_info(
+                    logger,
+                    "model_error",
+                    **metadata,
+                    error={"type": type(exc).__name__, "message": str(exc)},
+                    output=outputs,
+                )
                 raise
-            log_info(logger, "model_response", **metadata, response=response)
+            outputs.extend(response.output)
+            if response.usage is None:
+                usage_complete = False
+            elif usage is None:
+                usage = response.usage.model_copy(deep=True)
+            else:
+                for field in ("input_tokens", "output_tokens", "total_tokens"):
+                    setattr(usage, field, getattr(usage, field) + getattr(response.usage, field))
+                for field in ("input_tokens_details", "output_tokens_details"):
+                    total, current = getattr(usage, field), getattr(response.usage, field)
+                    for key in type(total).model_fields:
+                        a, b = getattr(total, key, None), getattr(current, key, None)
+                        setattr(total, key, a + b if a is not None and b is not None else None)
             host = next(
                 (c for c in response.output if c.type == "function_call" and c.name == SET_NEXT_CELL["name"]), None
             )
             if host is None:
-                return response  # A plain reply, or one of the caller's tools for it to answer.
-            output = {
-                "type": "function_call_output",
-                "call_id": host.call_id,
-                "output": _run_host_tool(host, submit),
-            }
+                response = response.model_copy(update={"output": outputs, "usage": usage if usage_complete else None})
+                log_info(logger, "model_response", **metadata, response=response)
+                return response
+            output = ResponseFunctionToolCallOutputItem(
+                id="fco_" + uuid4().hex,
+                type="function_call_output",
+                call_id=host.call_id,
+                status="completed",
+                output=_run_host_tool(host, submit),
+            )
+            outputs.append(output)
             # Replay every output item, including encrypted reasoning, without server-side storage.
-            items = [*items, *(item.model_dump(mode="json", exclude_none=True) for item in response.output), output]
+            items = [
+                *items,
+                *(item.model_dump(mode="json", exclude_none=True) for item in response.output),
+                output.model_dump(mode="json", exclude_none=True),
+            ]
 
     def query(self, input, *, logger=None, **params) -> str:
         """A plain model call used as a function (summarize, extract, classify, ...).

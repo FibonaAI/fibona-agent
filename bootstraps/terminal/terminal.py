@@ -245,10 +245,10 @@ class Terminal:
 
     def _keys_text(self):
         width = self.app.output.get_size().columns - 6
-        full = "Enter send · Alt+Enter newline · Ctrl+Y copy nb path · Ctrl+C stop/quit"
+        full = "Enter send · Alt+Enter newline · Ctrl+Y copy N.B. path · Ctrl+C stop/quit"
         if len(full) <= width:
             return full
-        short = "Enter send · Ctrl+Y copy nb path · Ctrl+C stop/quit"
+        short = "Enter send · Ctrl+Y copy N.B. path · Ctrl+C stop/quit"
         return short if len(short) <= width else "Enter · Ctrl+C"
 
     def _speed_text(self):
