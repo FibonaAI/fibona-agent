@@ -2,6 +2,7 @@
 
 import asyncio
 import atexit
+import base64
 import inspect
 import io
 import os
@@ -22,6 +23,7 @@ from prompt_toolkit.input import create_input
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit, Window, WindowAlign
 from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.output import ColorDepth, create_output
 from prompt_toolkit.renderer import print_formatted_text
 from prompt_toolkit.styles import Style
@@ -208,6 +210,7 @@ class Terminal:
             ),
             key_bindings=self.keys,
             full_screen=False,
+            mouse_support=True,
             erase_when_done=True,  # A closed or replaced UI leaves only the conversation in the scrollback.
             color_depth=ColorDepth.TRUE_COLOR,
             style=Style.from_dict(
@@ -266,24 +269,35 @@ class Terminal:
         budget = max(1, self.app.output.get_size().columns - 6 - len(self._speed_text()))
         for part in [
             ("class:model", " · " + self.model),
-            ("class:notebook", " · notebook"),
+            (
+                "class:notebook",
+                " · notebook ✓" if monotonic() < getattr(self, "copied_until", 0) else " · notebook",
+                self._copy_notebook,
+            ),
             ("class:session", " · " + self.session_id[:8]),
         ]:
-            visible_width = sum(len(item[1]) for item in parts if "[ZeroWidthEscape]" not in item[0])
+            visible_width = sum(len(item[1]) for item in parts)
             if visible_width + len(part[1]) <= budget:
                 if part[0] == "class:notebook":
-                    # An OSC 8 link: the terminal opens the notebook on click.
                     parts.extend(
                         [
                             ("class:session", " · "),
-                            ("[ZeroWidthEscape]", f"\x1b]8;;{self.notebook_path.as_uri()}\x1b\\"),
-                            ("class:notebook", "notebook"),
-                            ("[ZeroWidthEscape]", "\x1b]8;;\x1b\\"),
+                            ("class:notebook", "notebook", self._copy_notebook),
+                            ("class:session", part[1].removeprefix(" · notebook")),
                         ]
                     )
                 else:
                     parts.append(part)
         return FormattedText(parts)
+
+    def _copy_notebook(self, event):
+        if event.event_type == MouseEventType.MOUSE_UP:
+            # OSC 52 copies on the terminal's machine, including over SSH.
+            path = base64.b64encode(str(self.notebook_path).encode()).decode()
+            self.app.output.write_raw(f"\x1b]52;c;{path}\x07")
+            self.app.output.flush()
+            self.copied_until = monotonic() + 2
+            self.app.invalidate()
 
     def _set_state(self, state):
         self.status, self.started = state, monotonic()
