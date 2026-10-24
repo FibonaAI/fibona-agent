@@ -350,6 +350,7 @@ Repair the failure and continue the program.
                 slot.close()
                 if not result.quit and result.error is None and slot.code is None:
                     result.error = "The cell finished without choosing a next cell via set_next_cell."
+                log_info(cell_logger, "cell_result", output=result.output, error=result.error, quit=result.quit)
                 if on_result is not None:
                     on_result(memory.cell_count, result)
                 if result.quit:
