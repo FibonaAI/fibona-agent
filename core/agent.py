@@ -9,7 +9,7 @@ from threading import Lock
 from uuid import uuid4
 
 from openai import OpenAI
-from openai.types.responses import Response, ResponseFunctionToolCall
+from openai.types.responses import Response, ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
 
 from core.env import CellResult, IPythonEnv, Quit
 from core.utils import log_info, run_logger
@@ -46,13 +46,13 @@ your memory.
 ## call_me
 
 `call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for
-all items).
+returned items). If scheduling succeeds without a message, the host supplies "Next cell scheduled.".
 - `input`: a string, or a list of messages and items.
 - Optional: `tools` and `tool_choice` for your own tools, `text` for structured output (e.g. `{"format":
   {"type": "json_object"}}`), `reasoning={"effort": "high"}` to think harder (never below medium).
 
 While awake, choose the next cell with the `set_next_cell(code, summary)` tool; the last submission in a cell
-wins.
+wins. A scheduled cell ends your turn, so write any reply text before calling `set_next_cell`.
 
 You wake up knowing only what the call gives you, so build `input` from state: take the results, errors and
 facts you need from variables and `history`, and name the variables that hold the full data so the next cell
@@ -151,13 +151,15 @@ class Mind:
           Normalized or fixed by the mind:
             model, instructions: the mind itself.
             reasoning: only `effort` is kept, raised to at least "medium".
-            stream, background: always off; the full Response is returned.
+            stream, background: always off; a Response is returned.
             store, previous_response_id: stateless; to continue a conversation, put its
                 earlier items (e.g. `r.output`) into `input`.
             parallel_tool_calls: always off, so `set_next_cell` never shares a turn
                 with the caller's tools and the caller never has to answer it.
         submit: where `set_next_cell(code, summary)` lands. The agent binds a fresh one
             per cell, so a late call from a finished cell cannot choose the next one.
+            A scheduled cell ends the wake without another model turn; the returned output then
+            holds reply text, or a local acknowledgement if none was written. A rejection is sent back to retry.
         extra_body cannot override fields in PROTECTED.
 
         Example (agent side, before each cell runs):
@@ -199,12 +201,27 @@ class Mind:
             )
             if host is None:
                 return response  # A plain reply, or one of the caller's tools for it to answer.
-            output = {
-                "type": "function_call_output",
-                "call_id": host.call_id,
-                "output": _run_host_tool(host, submit),
-            }
-            # Replay every output item, including encrypted reasoning, without server-side storage.
+            result = _run_host_tool(host, submit)
+            if json.loads(result)["scheduled"]:
+                # The next cell is chosen; another turn would only acknowledge it. Keep the reply text so
+                # `r.output` stays safe to replay: an unanswered call or a lone reasoning item would be rejected.
+                response.output = [item for item in response.output if item.type == "message"]
+                if not response.output:
+                    response.output.append(
+                        ResponseOutputMessage(
+                            id=f"msg_{host.call_id}",
+                            type="message",
+                            role="assistant",
+                            status="completed",
+                            content=[
+                                ResponseOutputText(type="output_text", text="Next cell scheduled.", annotations=[])
+                            ],
+                        )
+                    )
+                return response
+            output = {"type": "function_call_output", "call_id": host.call_id, "output": result}
+            # A rejected submission goes back to the mind to retry. Replay every output item, including
+            # encrypted reasoning, without server-side storage.
             items = [*items, *(item.model_dump(mode="json", exclude_none=True) for item in response.output), output]
 
     def query(self, input, *, logger=None, **params) -> str:
