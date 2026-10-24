@@ -23,7 +23,6 @@ from prompt_toolkit.input import create_input
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit, Window, WindowAlign
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.output import ColorDepth, create_output
 from prompt_toolkit.renderer import print_formatted_text
 from prompt_toolkit.styles import Style
@@ -146,6 +145,8 @@ class Terminal:
         def newline(event):
             self.composer.buffer.insert_text("\n")
 
+        self.keys.add("c-y")(self._copy_notebook)
+
         @self.keys.add("c-c")
         def quit_ui(event):
             if self.status.startswith("Running") and callable(signal.getsignal(signal.SIGUSR1)):
@@ -210,7 +211,6 @@ class Terminal:
             ),
             key_bindings=self.keys,
             full_screen=False,
-            mouse_support=True,
             erase_when_done=True,  # A closed or replaced UI leaves only the conversation in the scrollback.
             color_depth=ColorDepth.TRUE_COLOR,
             style=Style.from_dict(
@@ -220,7 +220,7 @@ class Terminal:
                     "composer": "bg:#41414e #d6d6dd",
                     "status": "#a4cea2",
                     "model": "#ba94ed",
-                    "notebook": "#f0a6ca underline",
+                    "notebook": "#f0a6ca",
                     "session": "#f0a6ca",
                     "logo": "#78628f",
                     "notice": "#9494a4",
@@ -245,10 +245,10 @@ class Terminal:
 
     def _keys_text(self):
         width = self.app.output.get_size().columns - 6
-        full = "Enter send · Alt+Enter newline · Ctrl+C stop/quit"
+        full = "Enter send · Alt+Enter newline · Ctrl+Y copy nb path · Ctrl+C stop/quit"
         if len(full) <= width:
             return full
-        short = "Enter send · Ctrl+C stop/quit"
+        short = "Enter send · Ctrl+Y copy nb path · Ctrl+C stop/quit"
         return short if len(short) <= width else "Enter · Ctrl+C"
 
     def _speed_text(self):
@@ -272,32 +272,21 @@ class Terminal:
             (
                 "class:notebook",
                 " · notebook ✓" if monotonic() < getattr(self, "copied_until", 0) else " · notebook",
-                self._copy_notebook,
             ),
             ("class:session", " · " + self.session_id[:8]),
         ]:
             visible_width = sum(len(item[1]) for item in parts)
             if visible_width + len(part[1]) <= budget:
-                if part[0] == "class:notebook":
-                    parts.extend(
-                        [
-                            ("class:session", " · "),
-                            ("class:notebook", "notebook", self._copy_notebook),
-                            ("class:session", part[1].removeprefix(" · notebook")),
-                        ]
-                    )
-                else:
-                    parts.append(part)
+                parts.append(part)
         return FormattedText(parts)
 
     def _copy_notebook(self, event):
-        if event.event_type == MouseEventType.MOUSE_UP:
-            # OSC 52 copies on the terminal's machine, including over SSH.
-            path = base64.b64encode(str(self.notebook_path).encode()).decode()
-            self.app.output.write_raw(f"\x1b]52;c;{path}\x07")
-            self.app.output.flush()
-            self.copied_until = monotonic() + 2
-            self.app.invalidate()
+        # OSC 52 copies on the terminal's machine, including over SSH.
+        path = base64.b64encode(str(self.notebook_path).encode()).decode()
+        self.app.output.write_raw(f"\x1b]52;c;{path}\x07")
+        self.app.output.flush()
+        self.copied_until = monotonic() + 2
+        self.app.invalidate()
 
     def _set_state(self, state):
         self.status, self.started = state, monotonic()
