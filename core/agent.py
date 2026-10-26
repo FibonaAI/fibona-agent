@@ -11,7 +11,7 @@ from uuid import uuid4
 from openai import OpenAI
 from openai.types.responses import Response, ResponseFunctionToolCall, ResponseFunctionToolCallOutputItem
 
-from core.env import CellResult, IPythonEnv, Quit
+from core.env import DEFAULT_CELL_TIMEOUT, CellResult, IPythonEnv, Quit, cell_timeout, pause_cell_timeout
 from core.utils import log_info, run_logger
 
 INSTRUCTIONS = """
@@ -51,8 +51,10 @@ all items).
 - Optional: `tools` and `tool_choice` for your own tools, `text` for structured output (e.g. `{"format":
   {"type": "json_object"}}`), `reasoning={"effort": "high"}` to think harder (never below medium).
 
-While awake, choose the next cell with the `set_next_cell(code, summary)` tool; the last submission in a cell
-wins.
+While awake, choose the next cell with the `set_next_cell(code, summary, timeout)` tool; the last submission in a cell
+wins. `timeout` is a finite positive number of seconds, or null for the default 300 seconds.
+Model requests and waiting for user input do not consume the cell's timeout. A timed-out cell enters recovery;
+its variables and side effects are preserved. Native code may delay this soft interrupt.
 
 You wake up knowing only what the call gives you, so build `input` from state: take the results, errors and
 facts you need from variables and `history`, and name the variables that hold the full data so the next cell
@@ -104,8 +106,15 @@ SET_NEXT_CELL = {
     "description": "Submit the complete Python cell to run after the current cell finishes, with a short summary.",
     "parameters": {
         "type": "object",
-        "properties": {"code": {"type": "string"}, "summary": {"type": "string", "maxLength": 256}},
-        "required": ["code", "summary"],
+        "properties": {
+            "code": {"type": "string"},
+            "summary": {"type": "string", "maxLength": 256},
+            "timeout": {
+                "type": ["number", "null"],
+                "description": "Execution timeout in seconds; a finite positive number, or null for 300 seconds.",
+            },
+        },
+        "required": ["code", "summary", "timeout"],
         "additionalProperties": False,
     },
 }
@@ -124,7 +133,8 @@ PROTECTED = {
     "previous_response_id",
 }
 
-Submit = Callable[[str, str], None]
+Submit = Callable[[str, str, float | None], None]
+EFFORTS = {"medium", "high", "xhigh"}  # Reasoning efforts the mind uses; lower requests get its default.
 
 
 class Mind:
@@ -134,8 +144,24 @@ class Mind:
     to decide the next cell.
     """
 
-    def __init__(self, client: OpenAI, model: str, instructions: str):
+    def __init__(
+        self,
+        client: OpenAI,
+        model: str,
+        instructions: str,
+        *,
+        effort: str = "medium",
+        max_output_tokens: int | None = None,
+    ):
+        """effort and max_output_tokens are defaults for calls that don't choose their own."""
+        if effort not in EFFORTS:
+            raise ValueError(f"effort must be one of {sorted(EFFORTS)}")
         self.client, self.model, self.instructions = client, model, instructions
+        self.effort, self.max_output_tokens = effort, max_output_tokens
+
+    @pause_cell_timeout()
+    def _create_response(self, **params) -> Response:
+        return self.client.responses.create(**params)
 
     def wake(self, input=(), *, submit: Submit, logger=None, **body) -> Response:
         """Wake the mind. Exposed to cells as `call_me`.
@@ -149,18 +175,18 @@ class Mind:
             tools: the caller's own tools; `set_next_cell` is always appended.
             tool_choice: "auto" / "required" / "none", or a specific tool.
             text: output format, e.g. {"format": {"type": "json_object"}}.
-            max_output_tokens: cap on generated tokens, reasoning included.
+            max_output_tokens: cap on generated tokens, reasoning included; defaults to the mind's.
             include: extra output data; "reasoning.encrypted_content" is always added.
             metadata, ...: passed through unchanged.
           Normalized or fixed by the mind:
             model, instructions: the mind itself.
-            reasoning: only `effort` is kept, raised to at least "medium".
+            reasoning: only `effort` is kept; missing or below "medium", it is the mind's default effort.
             stream, background: always off; the full Response is returned.
             store, previous_response_id: stateless; to continue a conversation, put its
                 earlier items (e.g. `r.output`) into `input`.
             parallel_tool_calls: always off, so `set_next_cell` never shares a turn
                 with the caller's tools and the caller never has to answer it.
-        submit: where `set_next_cell(code, summary)` lands. The agent binds a fresh one
+        submit: where `set_next_cell(code, summary, timeout)` lands. The agent binds a fresh one
             per cell, so a late call from a finished cell cannot choose the next one.
         extra_body cannot override fields in PROTECTED.
 
@@ -178,10 +204,12 @@ class Mind:
         body = {k: v for k, v in body.items() if k not in PROTECTED}
         if body.get("extra_body") is not None:
             body["extra_body"] = {k: v for k, v in body["extra_body"].items() if k not in PROTECTED}
+        if self.max_output_tokens is not None:
+            body.setdefault("max_output_tokens", self.max_output_tokens)
         body.update(
             model=self.model,
             instructions=self.instructions,
-            reasoning={"effort": effort if effort in {"medium", "high", "xhigh"} else "medium"},
+            reasoning={"effort": effort if effort in EFFORTS else self.effort},
             tools=[*tools, SET_NEXT_CELL],
             parallel_tool_calls=False,
             store=False,
@@ -196,7 +224,7 @@ class Mind:
         while True:
             request = {**body, "input": items}
             try:
-                response = self.client.responses.create(**request)
+                response = self._create_response(**request)
             except BaseException as exc:
                 log_info(
                     logger,
@@ -219,6 +247,9 @@ class Mind:
                     for key in type(total).model_fields:
                         a, b = getattr(total, key, None), getattr(current, key, None)
                         setattr(total, key, a + b if a is not None and b is not None else None)
+                if hasattr(usage, "cost"):  # A provider extra, e.g. OpenRouter's cost in USD.
+                    a, b = usage.cost, getattr(response.usage, "cost", None)
+                    usage.cost = a + b if a is not None and b is not None else None
             host = next(
                 (c for c in response.output if c.type == "function_call" and c.name == SET_NEXT_CELL["name"]), None
             )
@@ -252,12 +283,16 @@ class Mind:
                 summaries = list(pool.map(lambda src: call_llm_api("Summarize in one line:\\n" + src), sources))
         """
         params = {k: v for k, v in params.items() if k not in {"stream", "background", "previous_response_id"}}
-        params.setdefault("model", self.model)
+        # The mind's defaults fit its own model only; another model may not take reasoning at all.
+        if params.setdefault("model", self.model) == self.model:
+            params.setdefault("reasoning", {"effort": self.effort})
+            if self.max_output_tokens is not None:
+                params.setdefault("max_output_tokens", self.max_output_tokens)
         request = {**params, "store": False, "input": _input_items(input)}
         metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_llm_api"}
         log_info(logger, "model_request", **metadata, request=request)
         try:
-            response = self.client.responses.create(**request)
+            response = self._create_response(**request)
         except BaseException as exc:
             log_info(logger, "model_error", **metadata, error={"type": type(exc).__name__, "message": str(exc)})
             raise
@@ -276,7 +311,7 @@ def _run_host_tool(call: ResponseFunctionToolCall, submit: Submit) -> str:
         args = json.loads(call.arguments)
         if not args.get("code", "").strip():
             raise ValueError("code must be a non-empty string")
-        submit(args["code"], args["summary"])
+        submit(args["code"], args["summary"], args["timeout"])
         result = {"scheduled": True}
     except Exception as error:
         result = {"scheduled": False, "error": str(error)}
@@ -310,14 +345,16 @@ class Slot:
     def __init__(self):
         self.code: str | None = None
         self.summary: str | None = None
+        self.timeout = DEFAULT_CELL_TIMEOUT
         self.closed = False
         self.lock = Lock()
 
-    def submit(self, code: str, summary: str) -> None:
+    def submit(self, code: str, summary: str, timeout: float | None = None) -> None:
+        timeout = cell_timeout(timeout)
         with self.lock:
             if self.closed:
                 raise RuntimeError("This cell has finished; its call_me can no longer choose a cell")
-            self.code, self.summary = code, summary  # The last submission wins.
+            self.code, self.summary, self.timeout = code, summary, timeout  # The last submission wins.
 
     def close(self) -> None:
         with self.lock:
@@ -352,7 +389,8 @@ Repair the failure and continue the program.
         Without them, the agent runs with captured output and no user input.
         on_result receives each cell's final validated result, including the cell that quits.
         The configured cwd must exist; the caller's working directory is restored afterward.
-        Cells and call_me calls are automatically logged to a separate logs/*.jsonl file for each run.
+        Cells and call_me calls are automatically logged to a separate logs/*.jsonl file for each run
+        ($FIBONA_LOG_DIR overrides logs/).
         Interruptions propagate.
         Cells execute synchronously in the calling thread.
         """
@@ -363,7 +401,7 @@ Repair the failure and continue the program.
             def quit_() -> None:
                 raise Quit
 
-            code, summary = bootstrap_cell, "Run the bootstrap cell."
+            code, summary, timeout = bootstrap_cell, "Run the bootstrap cell.", DEFAULT_CELL_TIMEOUT
             while True:
                 slot = Slot()
                 cell_logger = logging.LoggerAdapter(logger, {"cell": memory.cell_count})
@@ -380,7 +418,7 @@ Repair the failure and continue the program.
                 )
                 if on_cell is not None:
                     on_cell(memory.cell_count, summary, code)
-                result = env.execute(code, logger=cell_logger, summary=summary)
+                result = env.execute(code, timeout=timeout, logger=cell_logger, summary=summary)
                 slot.close()
                 if not result.quit and result.error is None and slot.code is None:
                     result.error = "The cell finished without choosing a next cell via set_next_cell."
@@ -392,18 +430,19 @@ Repair the failure and continue the program.
                 memory.record(code, summary, result)
 
                 if result.error is None:
-                    code, summary = slot.code, slot.summary
+                    code, summary, timeout = slot.code, slot.summary, slot.timeout
                     continue
                 # Side effects of the failed cell are not rolled back; the mind repairs from here.
                 message = (
                     self.REPAIR
                     + "\n\n"
                     + json.dumps(
-                        {"bootstrap_cell": bootstrap_cell, "code": code, "error": result.error}, ensure_ascii=False
+                        {"bootstrap_cell": bootstrap_cell, "code": code[:24000], "error": result.error[-8000:]},
+                        ensure_ascii=False,
                     )
                 )
                 # The recovery cell: wakes the mind with the failure so it can submit a repaired next cell.
-                code, summary = _wake_cell(message), "Repair the failed cell."
+                code, summary, timeout = _wake_cell(message), "Repair the failed cell.", DEFAULT_CELL_TIMEOUT
 
 
 def _wake_cell(message: str) -> str:

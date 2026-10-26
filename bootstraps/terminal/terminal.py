@@ -30,7 +30,7 @@ from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import TextArea
 
 from bootstraps.terminal.notebook import Notebook
-from core.env import CellResult, Quit
+from core.env import CellResult, Quit, pause_cell_timeout
 
 STOPPED = "Stopped by the user."  # The message a stopped cell's error ends with (see init.py).
 
@@ -503,6 +503,7 @@ class Terminal:
         self.close()
         self.previous_excepthook(kind, error, tb)
 
+    @pause_cell_timeout()
     def _read_input(self, prompt=""):
         if self.closed.is_set():
             raise self.ui_error or KeyboardInterrupt

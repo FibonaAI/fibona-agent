@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import wraps
@@ -31,8 +32,8 @@ class JsonFormatter(logging.Formatter):
 def run_logger():
     """Open one run's JSONL log and release its file handler on exit."""
     run_id = uuid4().hex
-    log_dir = Path("logs")
-    log_dir.mkdir(exist_ok=True)
+    log_dir = Path(os.getenv("FIBONA_LOG_DIR", "logs"))
+    log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{datetime.now():%Y%m%d-%H%M%S}-{run_id}.jsonl"
     log_path.touch(mode=0o600, exist_ok=False)
     logger = logging.Logger("fibona.run", level=logging.INFO)
@@ -55,8 +56,8 @@ def log_cell(execute):
     """Record a cell before execution, including cells that fail or are interrupted."""
 
     @wraps(execute)
-    def wrapped(self, code, *, logger=None, summary=""):
-        log_info(logger, "cell", summary=summary, code=code)
-        return execute(self, code)
+    def wrapped(self, code, *, timeout=None, logger=None, summary=""):
+        log_info(logger, "cell", summary=summary, code=code, timeout=timeout)
+        return execute(self, code, timeout=timeout)
 
     return wrapped
