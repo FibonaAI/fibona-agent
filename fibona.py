@@ -32,8 +32,16 @@ def main() -> int:
     if not bootstrap_cell.strip():
         parser.error("bootstrap cell must contain Python code")
     try:
-        with OpenAI() as client:
-            mind = Mind(client, os.getenv("FIBONA_MODEL", "gpt-6-astra"), INSTRUCTIONS)
+        with OpenAI(max_retries=int(os.getenv("FIBONA_API_RETRIES", "2"))) as client:
+            mind = Mind(
+                client,
+                os.getenv("FIBONA_MODEL", "gpt-6-astra"),
+                INSTRUCTIONS,
+                effort=os.getenv("FIBONA_REASONING_EFFORT", "medium"),
+                max_output_tokens=int(os.environ["FIBONA_MAX_OUTPUT_TOKENS"])
+                if os.getenv("FIBONA_MAX_OUTPUT_TOKENS")
+                else None,
+            )
             env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
             env.bind(argv=remaining_args)  # Arguments this launcher did not consume, for the bootstrap to read.
             Agent(mind, cwd=".").run(bootstrap_cell, env=env)
