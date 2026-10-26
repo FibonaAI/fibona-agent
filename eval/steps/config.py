@@ -16,7 +16,7 @@ MOUNTS = [{"type": "bind", "source": "/opt/fibona", "target": "/opt/fibona", "re
 
 
 class ModelSettings(BaseModel):
-    """Fibona's model call defaults, passed to plugins.agent; unset ones keep Fibona's own defaults."""
+    """call_me defaults (plugins/bootstrap.py) and API retries, passed to plugins.agent; unset ones keep Fibona's own."""
 
     model_config = ConfigDict(extra="forbid")
 

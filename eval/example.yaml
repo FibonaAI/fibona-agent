@@ -3,7 +3,7 @@ name: tb2-smoke                 # The run is <UTC time>-<name>: eval/experiments
 archive: tos://fibona-eval-archive/jobs
 dataset: terminal-bench@2.0     # Harbor dataset, as `harbor run -d` takes it.
 model: openai/gpt-6-astra       # As `harbor run -m` takes it.
-model_settings:                 # Defaults for Fibona's model calls; omit any to keep Fibona's own.
+model_settings:                 # call_me defaults and API retries; omit any to keep Fibona's own.
   reasoning_effort: high        # medium, high or xhigh, when the agent doesn't pick one (Fibona: medium).
   max_output_tokens: 32768      # Per call, reasoning included, when the agent doesn't set one.
   api_retries: 8                # OpenAI client retries per call.

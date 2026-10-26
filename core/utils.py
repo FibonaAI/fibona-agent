@@ -56,8 +56,8 @@ def log_cell(execute):
     """Record a cell before execution, including cells that fail or are interrupted."""
 
     @wraps(execute)
-    def wrapped(self, code, *, timeout=None, logger=None, summary=""):
-        log_info(logger, "cell", summary=summary, code=code, timeout=timeout)
-        return execute(self, code, timeout=timeout)
+    def wrapped(self, code, *, logger=None, summary=""):
+        log_info(logger, "cell", summary=summary, code=code)
+        return execute(self, code)
 
     return wrapped
