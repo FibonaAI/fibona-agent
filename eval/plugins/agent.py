@@ -1,4 +1,4 @@
-"""Harbor installed agent: runs Fibona with BOOTSTRAP once per task inside the task container.
+"""Harbor installed agent: runs Fibona with bootstrap.py once per task inside the task container.
 
 steps/config.py mounts /opt/fibona (wheels, uv and Python, copied by job.py), so install runs offline.
 """
@@ -6,39 +6,13 @@ steps/config.py mounts /opt/fibona (wheels, uv and Python, copied by job.py), so
 import json
 import os
 import shlex
+from pathlib import Path
 
 from harbor.agents.capabilities import AgentCapabilities
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
 
-# The bootstrap cell: the terminal bootstrap's working context without its UI.
-# The task comes from the command line. Nobody answers input(), so the agent ends the run with quit().
-BOOTSTRAP = '''
-from bootstraps.terminal.context import initialize_context
-
-instructions = """
-You are running unattended in a benchmark container: nobody reads your output or answers input().
-Before preparing final deliverables or declaring completion, reread startup_task in full and check every required output, path, format, behavior, and constraint against it.
-Verify delivery by inspecting the actual files, database records, or service state and the results of relevant checks; a plan, summary, or successful file write alone does not establish completion.
-Submit only one set_next_cell per wake; it schedules future work, which has not executed until recorded in history.
-If a required deliverable is missing or a check fails, keep it pending and continue working. Call quit() only after verifying the task's requirements are satisfied.
-These cells use Fibona's isolated Python runtime, which can differ from the task's Python.
-Inspect the task's supplied interpreters and virtualenvs for preinstalled dependencies before downloading duplicate packages into this runtime.
-The staged uv executable is /opt/fibona/dist/uv.
-Stay within the task's declared memory budget, shared by Fibona, session objects, and child processes; leave headroom for the interpreter and SDK.
-Inspect large objects using types, lengths, shapes, and small samples. Do not stringify entire globals(), history, model responses, or large objects before truncating them: repr(value)[:N] and str(value)[:N] still construct the full string first.
-Write large results to files and keep paths and compact summaries in session state; avoid repeatedly embedding earlier history or output into new output.
-For file discovery, start with paths explicitly provided by the task and the current working directory, then gradually widen the search.
-Avoid unbounded recursive searches from the filesystem root; set time, depth, and result-count limits, do not follow directory symlinks, skip /proc, /sys, /dev, and read only regular files.
-Every search command must have an explicit wall-clock timeout (for example, timeout 30s find ... or subprocess.run(..., timeout=30)); run potentially blocking Python searches in a subprocess with a timeout too.
-If a search times out, narrow its scope or change methods.
-Run programs expected to take a long time in separate processes, save their logs, and check progress periodically; avoid waiting indefinitely in a single cell.
-""".strip()
-task = " ".join(argv)  # fibona.py binds the arguments it did not consume.
-build_context = initialize_context(globals())
-call_me(  # Core binds call_me.
-    input=[*build_context(), {"role": "user", "content": "Start the user's task and submit the next Python cell."}]
-)
-'''.lstrip()
+# The bootstrap cell each task runs; see bootstrap.py.
+BOOTSTRAP = (Path(__file__).parent / "bootstrap.py").read_text()
 
 
 class Fibona(BaseInstalledAgent):
