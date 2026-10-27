@@ -88,7 +88,8 @@ class IPythonEnv:
         error = result.error_before_exec or result.error_in_exec
         if isinstance(error, KeyboardInterrupt):
             raise error  # Ctrl+C is the user stopping the agent, not a bug for it to repair.
-        if isinstance(error, APIError) and getattr(error, "status_code", None) not in {400, 422}:
+        # 400/404/422 reject the request itself (bad params, too long, unknown model), so the mind can repair it.
+        if isinstance(error, APIError) and getattr(error, "status_code", None) not in {400, 404, 422}:
             raise error  # SDK retries are exhausted; a provider failure cannot be repaired by another model call.
         if isinstance(error, Quit):
             return CellResult(buffer.getvalue(), quit=True)

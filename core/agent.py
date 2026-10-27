@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
-from openai import OpenAI
+from openai import APIError, OpenAI
 from openai.types.responses import Response, ResponseFunctionToolCall, ResponseFunctionToolCallOutputItem
 
 from core.env import CellResult, IPythonEnv, Quit
@@ -197,6 +197,8 @@ class Mind:
             request = {**body, "input": items}
             try:
                 response = self.client.responses.create(**request)
+                if response.status == "failed":  # e.g. OpenRouter's provider errors after generation began.
+                    raise APIError(f"Response {response.id} failed: {response.error}", request=None, body=None)
             except BaseException as exc:
                 log_info(
                     logger,
@@ -261,6 +263,8 @@ class Mind:
         log_info(logger, "model_request", **metadata, request=request)
         try:
             response = self.client.responses.create(**request)
+            if response.status == "failed":  # e.g. OpenRouter's provider errors after generation began.
+                raise APIError(f"Response {response.id} failed: {response.error}", request=None, body=None)
         except BaseException as exc:
             log_info(logger, "model_error", **metadata, error={"type": type(exc).__name__, "message": str(exc)})
             raise
