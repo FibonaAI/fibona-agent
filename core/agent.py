@@ -70,8 +70,9 @@ can use them.
 ## State
 
 - **Variables** persist. Inspect them with `globals()`; values are not automatically sent to you.
-- **`history`**: one `{code, summary, output, error}` dict per finished cell, with the full output.
-  Summaries record intent; output and errors record what happened. Each cell receives a copy of the host's records.
+- **`history`**: one `{code, summary, output, error, status}` dict per cell, including the current cell at the end.
+  `summary` describes the cell's intent. `output` records stdout and stderr as of now.
+  `error` records failures. `status` is `running`, `completed`, or `error`. Finished records are copies.
 - Choose what to include in `input`. The host does not select or send working context for you.
 
 ## In the session
@@ -310,7 +311,7 @@ class Memory:
     """The host's execution records; cells receive copies."""
 
     def __init__(self):
-        self.history = []  # One {code, summary, output, error} dict per finished cell.
+        self.history = []  # One record per finished cell.
 
     @property
     def cell_count(self) -> int:
@@ -319,7 +320,15 @@ class Memory:
 
     def record(self, code: str, summary: str, result: CellResult) -> None:
         """After a cell: keep its original record, with the full output."""
-        self.history.append({"code": code, "summary": summary, "output": result.output, "error": result.error})
+        self.history.append(
+            {
+                "code": code,
+                "summary": summary,
+                "output": result.output,
+                "error": result.error,
+                "status": "error" if result.error is not None else "completed",
+            }
+        )
 
     def snapshot(self) -> list[dict]:
         """Copies for cells to read as history; editing them cannot alter the originals."""
@@ -393,6 +402,11 @@ Repair the failure and continue the program.
             failures = 0
             while True:
                 slot = Slot()
+                current = {"code": code, "summary": summary, "output": "", "error": None, "status": "running"}
+
+                def record_output(text: str, current=current) -> None:
+                    current["output"] += text
+
                 cell_logger = logging.LoggerAdapter(logger, {"cell": memory.cell_count})
                 # Restore runtime bindings each cell; mutations to shared objects still persist.
                 env.bind(
@@ -403,14 +417,19 @@ Repair the failure and continue the program.
                     ),
                     call_llm_api=partial(self.mind.query, logger=cell_logger),
                     quit=quit_,
-                    history=memory.snapshot(),
+                    history=[*memory.snapshot(), current],
                 )
                 if on_cell is not None:
                     on_cell(memory.cell_count, summary, code)
-                result = env.execute(code, logger=cell_logger, summary=summary)
+                result = env.execute(code, logger=cell_logger, summary=summary, on_output=record_output)
                 slot.close()
                 if not result.quit and result.error is None and slot.code is None:
                     result.error = "The cell finished without choosing a next cell via set_next_cell."
+                current.update(
+                    output=result.output,
+                    error=result.error,
+                    status="error" if result.error is not None else "completed",
+                )
                 log_info(cell_logger, "cell_result", output=result.output, error=result.error, quit=result.quit)
                 if on_result is not None:
                     on_result(memory.cell_count, result)
