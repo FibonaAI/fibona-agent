@@ -1,0 +1,9 @@
+{
+  "name": "fibona-new-core",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node main.js"
+  }
+}
