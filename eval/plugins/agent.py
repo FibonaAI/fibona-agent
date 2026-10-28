@@ -1,11 +1,13 @@
 """Harbor installed agent: runs Fibona with bootstrap.py once per task inside the task container.
 
+Supports reasoning_effort medium/high/xhigh/max; the core enforces at least medium.
+This implementation has no fixed context-window policy and does not consume context_tokens.
+
 steps/config.py mounts /opt/fibona (wheels, uv and Python, copied by job.py), so install runs offline.
 After the run, Fibona's run logs become agent/trajectory.json (ATIF), which `harbor view` shows; see plugins/utils.py.
 """
 
 import json
-import os
 import shlex
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from harbor.agents.capabilities import AgentCapabilities
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
 from harbor.utils.trajectory_utils import format_trajectory_json
 from plugins.utils import convert
+from steps.config import ModelSettings
 
 # The bootstrap cell each task runs; see bootstrap.py.
 BOOTSTRAP = (Path(__file__).parent / "bootstrap.py").read_text()
@@ -21,21 +24,12 @@ BOOTSTRAP = (Path(__file__).parent / "bootstrap.py").read_text()
 class Fibona(BaseInstalledAgent):
     capabilities = AgentCapabilities(skills=True, mcp_servers=True)
 
-    def __init__(
-        self,
-        *args,
-        reasoning_effort: str | None = None,
-        max_output_tokens: int | None = None,
-        api_retries: int = 8,
-        **kwargs,
-    ) -> None:
-        """Model settings from `--ak`, i.e. the job config's model_settings; unset ones keep Fibona's defaults."""
+    def __init__(self, *args, base_url: str | None = None, **kwargs) -> None:
+        self.base_url = base_url
+        self.model_settings = ModelSettings.model_validate(
+            {key: kwargs.pop(key) for key in ModelSettings.model_fields if key in kwargs}
+        )
         super().__init__(*args, **kwargs)
-        self.model_env = {"FIBONA_API_RETRIES": str(api_retries)}
-        if reasoning_effort is not None:
-            self.model_env["FIBONA_REASONING_EFFORT"] = reasoning_effort
-        if max_output_tokens is not None:
-            self.model_env["FIBONA_MAX_OUTPUT_TOKENS"] = str(max_output_tokens)
 
     @staticmethod
     def name() -> str:
@@ -92,10 +86,12 @@ class Fibona(BaseInstalledAgent):
 
     @with_prompt_template
     async def run(self, instruction, environment, context) -> None:
-        env = {k: os.environ[k] for k in ("OPENAI_API_KEY", "OPENAI_BASE_URL") if os.environ.get(k)}
-        env["FIBONA_MODEL"] = self.model_name or "gpt-6-astra"
-        env["FIBONA_LOG_DIR"] = "/logs/agent"  # Not the task's working directory, which the verifier may inspect.
-        env.update(self.model_env)
+        env = self.model_settings.environment(self.model_name or "gpt-6-astra", self.base_url)
+        if env.get("FIBONA_REASONING_EFFORT", "medium") not in {"medium", "high", "xhigh", "max"}:
+            raise ValueError(
+                "Fibona supports reasoning_effort medium/high/xhigh/max; select an agent that supports the requested effort"
+            )
+        env["FIBONA_LOG_DIR"] = "/logs/agent"
         if (memory_mb := environment.task_env_config.memory_mb) is not None:
             instruction += (
                 f"\n\nDeclared memory budget for this task's agent container: {memory_mb} MiB. "

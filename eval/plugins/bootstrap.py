@@ -5,6 +5,7 @@ session. The task comes from the command line; nobody answers input(), so the ag
 """
 
 import asyncio
+import json
 import math
 import os
 import signal
@@ -72,6 +73,12 @@ if os.getenv("FIBONA_REASONING_EFFORT"):
 if os.getenv("FIBONA_MAX_OUTPUT_TOKENS"):
     _CALL_ME_DEFAULTS["max_output_tokens"] = int(os.environ["FIBONA_MAX_OUTPUT_TOKENS"])
 
+if os.getenv("FIBONA_EXTRA_BODY"):
+    _extra_body = json.loads(os.environ["FIBONA_EXTRA_BODY"])
+    if not isinstance(_extra_body, dict):
+        raise ValueError("FIBONA_EXTRA_BODY must be a JSON object")
+    _CALL_ME_DEFAULTS["extra_body"] = _extra_body
+
 
 def _start_cell(info) -> None:
     namespace = globals()
@@ -115,5 +122,6 @@ A timed-out cell fails and you repair from there; its side effects are kept.
 task = " ".join(argv)  # noqa: F821 -- fibona.py binds the arguments it did not consume.
 build_context = initialize_context(globals())
 call_me(  # noqa: F821 -- core binds call_me.
-    input=[*build_context(), {"role": "user", "content": "Start the user's task and submit the next Python cell."}]
+    input=[*build_context(), {"role": "user", "content": "Start the user's task and submit the next Python cell."}],
+    **_CALL_ME_DEFAULTS,
 )

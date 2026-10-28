@@ -31,6 +31,30 @@ from harbor.models.task.config import TaskConfig as TaskDefinition
 from harbor.models.task.verifier_mode import resolve_effective_verifier_env_config
 from harbor.trial.hooks import TrialEvent
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
+from steps.retry import network_retry, transient_output
+
+
+def proxy_bypass(compose: dict, inherited: list[str], image_env: dict[str, list[str]]) -> dict:
+    """Augment bypass entries without changing external proxy routing or task source."""
+    services = compose.get("services", {})
+    names = set(services)
+    for service in services.values():
+        for network in (service.get("networks") or {}).values():
+            if network:
+                names.update(network.get("aliases") or [])
+    override = {"services": {}}
+    for name, service in services.items():
+        env = service.get("environment") or {}
+        image = dict(item.split("=", 1) for item in image_env.get(service.get("image"), []) if "=" in item)
+        values = [
+            *inherited,
+            *(image.get(k, "") for k in ("NO_PROXY", "no_proxy")),
+            *(env.get(k) or "" for k in ("NO_PROXY", "no_proxy")),
+        ]
+        entries = {entry.strip() for value in values for entry in value.split(",") if entry.strip()}
+        bypass = ",".join(sorted(entries | names | {"localhost", "127.0.0.1", "::1"}))
+        override["services"][name] = {"environment": {"NO_PROXY": bypass, "no_proxy": bypass}}
+    return override
 
 
 class SSHSettings(BaseModel):
@@ -76,6 +100,22 @@ class TaskGroup(BaseModel):
 
 class SSHComposeOps(ec2._EC2ComposeOps):
     """Transfer artifacts through tar; download archives to disk instead of buffering them in RAM."""
+
+    async def exec(
+        self,
+        command: str,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        timeout_sec: int | None = None,
+        user: str | int | None = None,
+        *,
+        service: str | None = None,
+    ) -> ec2.ExecResult:
+        # Harbor's nested login shells overwrite explicit exec PATH overrides.
+        # Honor them (including --verifier-env); leave default commands unchanged.
+        if service in (None, "main") and env is not None and "PATH" in env:
+            command = f"export PATH={shlex.quote(env['PATH'])}; {command}"
+        return await super().exec(command, cwd=cwd, env=env, timeout_sec=timeout_sec, user=user, service=service)
 
     async def _transfer(self, args: list[str], stdin: bytes | None = None, *, output=None) -> bytes:
         env = self._env._compose_env_vars()
@@ -181,6 +221,139 @@ class SSHHosts(ec2.EC2Environment):
 
     async def _wait_for_instance_ready(self) -> None:
         pass
+
+    def _compose_file_flags(self) -> list[str]:
+        flags = super()._compose_file_flags()
+        if path := getattr(self, "_proxy_override", None):
+            flags += ["-f", path]
+        return flags
+
+    async def _prepare_proxy_bypass(self) -> None:
+        rendered = await super()._compose_exec(["config", "--format", "json"], timeout_sec=30)
+        if rendered.return_code != 0:
+            raise RuntimeError("Cannot resolve task Compose configuration")
+        compose = json.loads(rendered.stdout)
+        # Docker client defaults are otherwise injected after Compose resolution.
+        script = (
+            "import json,os,pathlib; "
+            "p=pathlib.Path(os.environ.get('DOCKER_CONFIG',str(pathlib.Path.home()/'.docker')))/'config.json'; "
+            "d=json.loads(p.read_text()) if p.exists() else {}; "
+            "proxies=d.get('proxies',{}); "
+            "v=proxies.get(os.environ.get('DOCKER_HOST','unix:///var/run/docker.sock'),proxies.get('default',{})); "
+            "print(json.dumps([v.get('noProxy','')]))"
+        )
+        command = ("sudo -n " if self._docker_cmd == "sudo docker" else "") + "python3 -c " + shlex.quote(script)
+        defaults = await self._ssh_exec(command, cwd="/", timeout_sec=30)
+        if defaults.return_code != 0:
+            raise RuntimeError("Cannot read worker proxy bypass defaults")
+        inherited = json.loads(defaults.stdout)
+        # Compose v2 names build-only images <project>-<service>.
+        for name, service in compose["services"].items():
+            if service.get("build") and not service.get("image"):
+                service["image"] = f"{compose['name']}-{name}"
+        images = list(dict.fromkeys(s["image"] for s in compose["services"].values() if s.get("image")))
+        image_env = {}
+        if images:
+            result = await self._ssh_exec(
+                shlex.join([*self._docker_parts(), "image", "inspect", "--format", "{{json .Config.Env}}", *images]),
+                cwd="/",
+                timeout_sec=30,
+            )
+            if result.return_code != 0:
+                raise RuntimeError("Cannot read prepared image proxy defaults")
+            image_env = dict(
+                zip(images, (json.loads(line) or [] for line in result.stdout.split("\n") if line), strict=True)
+            )
+        override = proxy_bypass(compose, inherited, image_env)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "docker-compose-proxy.json"
+            path.write_text(json.dumps(override))
+            remote = f"{self._compose_dir_vm}/{path.name}"
+            await self._upload_file_to_host(path, remote)
+        self._proxy_override = remote
+
+    async def _compose_exec(self, subcommand: list[str], timeout_sec: int | None = None) -> ec2.ExecResult:
+        if subcommand[:1] != ["up"]:
+            return await super()._compose_exec(subcommand, timeout_sec=timeout_sec)
+
+        @network_retry
+        async def prepare():
+            pulled = await super(SSHHosts, self)._compose_exec(
+                ["pull", "--ignore-buildable", "--policy", "missing"],
+                timeout_sec=round(self.task_env_config.build_timeout_sec),
+            )
+            if pulled.return_code != 0:
+                if transient_output((pulled.stderr or "") + (pulled.stdout or "")):
+                    raise ConnectionError("Transient image preparation failure")
+                raise RuntimeError(f"Image preparation failed: {pulled.stdout} {pulled.stderr}")
+
+        await prepare()
+        await self._prepare_proxy_bypass()
+        return await self._start_with_log([*subcommand, "--pull", "never"], timeout_sec)
+
+    async def _start_with_log(self, subcommand, timeout_sec):
+        # Keep output on the worker even when SSH's timeout would discard its buffers.
+        directory = self.trial_paths.trial_dir / "startup" / self._compose_project_name
+        directory.mkdir(parents=True, exist_ok=True)
+        remote = f"{self._session_dir_vm}/startup.log"
+        env = self._compose_env_vars()
+        command = self._compose_cmd(subcommand, env_vars_for_sudo=env if self._docker_cmd == "sudo docker" else None)
+        if timeout_sec is not None:
+            command = f"timeout --signal=TERM --kill-after=10s {timeout_sec}s {command}"
+        command += f" > {shlex.quote(remote)} 2>&1"
+        result = None
+        try:
+            result = await self._ssh_exec(
+                command,
+                cwd="/",
+                env=None if self._docker_cmd == "sudo docker" else env,
+                timeout_sec=None if timeout_sec is None else timeout_sec + 30,
+            )
+        finally:
+            await self._capture_startup(remote, directory, result)
+        if result.return_code != 0 and (directory / "compose.log").exists():
+            result.stderr = (directory / "compose.log").read_text()[-8192:]
+        if result.return_code == 124:
+            raise TimeoutError(f"Compose startup exceeded {timeout_sec}s; see {directory}")
+        return result
+
+    async def _capture_startup(self, remote, directory, result):
+        try:
+            async with asyncio.timeout(30):
+                if result is None or result.return_code != 0:
+                    (directory / "transport.json").write_text(
+                        json.dumps(
+                            {
+                                "return_code": result.return_code if result else None,
+                                "stderr": result.stderr if result else "startup interrupted",
+                            }
+                        )
+                    )
+                await self._download_file_from_host(remote, directory / "compose.log")
+                if result is None or result.return_code != 0:
+                    snapshot = await super()._compose_exec(["ps", "--all", "--format", "json"], timeout_sec=20)
+                    (directory / "containers.json").write_text(snapshot.stdout or "")
+                    ids = await super()._compose_exec(["ps", "--all", "--quiet"], timeout_sec=20)
+                    containers = [c for c in (ids.stdout or "").split() if all(x in "0123456789abcdef" for x in c)]
+                    if containers:
+                        states = await self._ssh_exec(
+                            shlex.join(
+                                [
+                                    *self._docker_parts(),
+                                    "inspect",
+                                    "--format",
+                                    '{"id":{{json .Id}},"state":{{json .State}}}',
+                                    *containers,
+                                ]
+                            ),
+                            cwd="/",
+                            timeout_sec=10,
+                        )
+                        (directory / "states.jsonl").write_text((states.stdout or "") + (states.stderr or ""))
+                    logs = await super()._compose_exec(["logs", "--tail", "100", "--timestamps"], timeout_sec=10)
+                    (directory / "containers.log").write_text((logs.stdout or "") + (logs.stderr or ""))
+        except Exception as error:
+            self.logger.warning("Startup diagnostic collection failed: %s", type(error).__name__)
 
     async def _resolve_host(self) -> None:
         self._host, self._gpu_ids = self.assigned[self.trial_paths.trial_dir.name]

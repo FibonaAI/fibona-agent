@@ -23,11 +23,13 @@ from harbor.models.job.config import DatasetConfig
 from harbor.tasks.client import TaskClient
 from plugins.hosts import mirror_image
 from steps.config import JobConfig
+from steps.retry import network_retry, transient_output
 from steps.workers import REGION
 
 CRANE = str(Path(__file__).resolve().parent.parent / "bin" / "crane")
 
 
+@network_retry
 async def download(dataset: str) -> list[Path]:
     name, _, version = dataset.partition("@")
     config = DatasetConfig(name=name, **({"ref": version or "latest"} if "/" in name else {"version": version or None}))
@@ -51,8 +53,15 @@ def task_images(root: Path) -> tuple[str, list[str]]:
     return name, [image for image in images if image and "${" not in image]
 
 
+@network_retry
 def crane(*args: str, env: dict) -> subprocess.CompletedProcess:
-    return subprocess.run([CRANE, *args], env=env, capture_output=True, text=True, timeout=3600)
+    try:
+        result = subprocess.run([CRANE, *args], env=env, capture_output=True, text=True, timeout=3600)
+    except subprocess.TimeoutExpired as error:
+        raise TimeoutError("Registry command timed out") from error
+    if result.returncode and transient_output(result.stderr):
+        raise ConnectionError(f"Transient registry connection failure: {result.stderr[-2000:]}")
+    return result
 
 
 def ensure(image: str, target: str, env: dict) -> str:
@@ -94,7 +103,7 @@ def ensure_images(config: JobConfig, out: Path) -> None:
                 images[image].append(task)
 
     host = registry.split("/", 1)[0]
-    token = volcenginesdkcr.CRApi().get_authorization_token(
+    token = network_retry(volcenginesdkcr.CRApi().get_authorization_token)(
         volcenginesdkcr.GetAuthorizationTokenRequest(registry=host.split(".", 1)[0].removesuffix("-" + REGION))
     )
     auth = base64.b64encode(f"{token.username}:{token.token}".encode()).decode()
@@ -112,7 +121,7 @@ def ensure_images(config: JobConfig, out: Path) -> None:
             entry = {"target": target, "tasks": sorted(images[image])}
             try:
                 entry["status"] = ensure(image, target, env)
-            except (RuntimeError, subprocess.TimeoutExpired) as error:
+            except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
                 entry["status"], entry["error"] = "failed", str(error)
             print(f"{entry['status']:8} {image}", flush=True)
             return image, entry
