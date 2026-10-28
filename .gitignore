@@ -28,3 +28,7 @@ logs/
 /eval/cache/
 /eval/profiles
 /eval/experiments/
+/eval/viz/jobs/
+/eval/viz/data/
+/eval/viz/site/index.json
+/eval/viz/site/runs/

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fibona Eval</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Code:wght@300..800&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <nav class="breadcrumb"><a href="./">Fibona Eval</a><span>/</span><span class="current" id="crumb"></span></nav>
+  <header class="title"><h1 id="run"></h1><span class="links" id="links"></span></header>
+  <div id="files"></div>
+</main>
+<script>
+// The job.py files of one run, which build.py links into runs/<run>/; harbor view shows the rest.
+const FILES = ["config.yaml", "config.resolved.yaml", "meta.json", "git.patch", "images.json", "instances.json"];
+const run = new URLSearchParams(location.search).get("run") || "";
+const esc = s => String(s).replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[c]);
+const base = `runs/${encodeURIComponent(run)}/`;
+// Same default as index.html: harbor view on the next port, or ?harbor=<url>.
+const HARBOR = new URLSearchParams(location.search).get("harbor")
+  || `${location.protocol}//${location.hostname}:${Number(location.port || 80) + 1}`;
+document.getElementById("run").textContent = document.getElementById("crumb").textContent = run;
+document.title = `${run} · Fibona Eval`;
+document.getElementById("links").innerHTML =
+  `<a href="${HARBOR}/jobs/${encodeURIComponent(run)}" target="_blank">Harbor</a>`;
+Promise.all(FILES.map(name => fetch(base + name).then(r => r.ok ? r.text() : null).catch(() => null))).then(texts => {
+  document.getElementById("files").innerHTML = FILES.map((name, i) => texts[i] == null ? "" : `<section class="card">
+    <h2>${name}</h2><pre>${esc(texts[i]) || '<span class="muted">(empty)</span>'}</pre></section>`).join("");
+});
+</script>
+</body>
+</html>

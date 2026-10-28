@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fibona Eval</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Google+Sans+Code:wght@300..800&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header><h1>Fibona Eval</h1></header>
+  <div class="controls">
+    <input id="q" placeholder="Search runs, models, datasets, branches…" autofocus>
+  </div>
+  <div class="panel">
+    <table>
+      <thead><tr id="head"></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+<script>
+// harbor view runs on its own origin (it only works at the root path): the next port by default (make viz), or ?harbor=<url>.
+const HARBOR = new URLSearchParams(location.search).get("harbor")
+  || `${location.protocol}//${location.hostname}:${Number(location.port || 80) + 1}`;
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
+const rate = r => r.n_trials ? r.n_passed / r.n_trials : null;
+const ago = t => {
+  if (!t) return "";
+  const s = (Date.now() - new Date(t)) / 1000;
+  for (const [n, u] of [[86400, "d"], [3600, "h"], [60, "m"]]) if (s >= n) return `${Math.floor(s / n)}${u} ago`;
+  return "just now";
+};
+const status = r => {
+  if (!r.finished_at) return ["run-live", "running"];
+  if (r.exit_code === 0) return ["ok", "done"];
+  if (String(r.error || "").includes("SystemExit")) return ["warn", "stopped"];
+  return ["bad", "failed"];
+};
+const harborLink = (r, path = "") => `${HARBOR}/jobs/${encodeURIComponent(r.run)}${path}`;
+
+const COLUMNS = [
+  {key: "run", label: "Run", sort: r => r.run},
+  {key: "links", label: ""},
+  {key: "status", label: "Status", sort: r => status(r)[1]},
+  {key: "model", label: "Model", sort: r => r.model || ""},
+  {key: "dataset", label: "Dataset", sort: r => r.dataset || ""},
+  {key: "pass", label: "Passed", num: true, sort: r => rate(r) ?? -1},
+  {key: "errored", label: "Errored", num: true, sort: r => r.n_errored ?? -1},
+  {key: "commit", label: "Commit", sort: r => r.commit || ""},
+  {key: "user", label: "User", sort: r => r.user || ""},
+  {key: "started", label: "Started", sort: r => r.started_at || ""},
+];
+let runs = [], sortKey = "started", sortDir = -1;
+const open = new Set();
+
+function cell(r, key) {
+  switch (key) {
+    case "run": return `<td class="name"><span class="caret">▸</span>${esc(r.run)}</td>`;
+    case "links": return `<td class="links"><a href="run.html?run=${encodeURIComponent(r.run)}">Config</a>${r.viewable
+      ? `<a href="${harborLink(r)}" target="_blank">Harbor</a>` : ""}</td>`;
+    case "status": { const [cls, label] = status(r);
+      return `<td><span class="badge ${cls}" title="${esc(r.error)}">${label}</span></td>`; }
+    case "model": return `<td>${r.model ? `<span class="chip">${esc(r.model)}</span>` : ""}</td>`;
+    case "dataset": return `<td class="muted">${esc(r.dataset)}</td>`;
+    case "pass": { const p = rate(r);
+      return `<td class="num">${p == null ? "" : `<span class="rate"><span class="bar"><span style="width:${p * 100}%"></span></span>
+        ${r.n_passed} / ${r.n_trials}</span>`}</td>`; }
+    case "errored": return `<td class="num ${r.n_errored ? "" : "muted"}">${r.n_errored ?? ""}</td>`;
+    case "commit": return `<td><code title="${esc(r.branch)}">${esc((r.commit || "").slice(0, 7))}${r.dirty ? "*" : ""}</code>
+      <span class="muted">${esc(r.branch)}</span></td>`;
+    case "user": return `<td>${esc(r.user)}</td>`;
+    case "started": return `<td class="muted" title="${esc(r.started_at)}">${ago(r.started_at)}</td>`;
+  }
+}
+
+const duration = sec => sec == null ? "" : sec < 3600 ? `${Math.round(sec / 60)} min` : `${(sec / 3600).toFixed(1)} h`;
+
+function trials(r) {
+  if (!r.trials.length) return `<div class="empty">No trials recorded.</div>`;
+  const rows = r.trials.map(t => {
+    // A verifier reward decides pass/fail; without one the trial errored before grading.
+    const [cls, label] = t.reward == null ? ["warn", "error"] : t.reward >= 1 ? ["ok", "passed"] : ["bad", "failed"];
+    const name = r.viewable
+      ? `<a href="${harborLink(r, "/trials/" + encodeURIComponent(t.name))}" target="_blank">${esc(t.name)}</a>` : esc(t.name);
+    return `<tr><td class="name">${name}</td><td><span class="badge ${cls}">${label}</span></td>
+      <td class="num">${t.reward ?? ""}</td><td class="num">${duration(t.agent_seconds)}</td>
+      <td class="num">${t.cost_usd == null ? "" : "$" + t.cost_usd.toFixed(2)}</td>
+      <td class="muted">${esc(t.exception)}</td></tr>`;
+  });
+  return `<table class="trial-list"><thead><tr><th>Trial</th><th>Result</th><th class="num">Reward</th>
+    <th class="num">Agent time</th><th class="num">Cost</th><th>Exception</th></tr></thead><tbody>${rows.join("")}</tbody></table>`;
+}
+
+function render() {
+  const q = document.getElementById("q").value.toLowerCase();
+  const shown = runs.filter(r => !q || [r.run, r.model, r.dataset, r.branch, r.commit, r.user].join(" ").toLowerCase().includes(q));
+  const by = COLUMNS.find(c => c.key === sortKey).sort;
+  shown.sort((a, b) => { const x = by(a), y = by(b); return (x < y ? -1 : x > y ? 1 : 0) * sortDir; });
+
+  document.getElementById("head").innerHTML = COLUMNS.map(c =>
+    `<th class="${c.num ? "num" : ""}" data-key="${c.key}">${c.label}${c.key === sortKey ? `<span class="arrow">${sortDir > 0 ? "↑" : "↓"}</span>` : ""}</th>`).join("");
+  document.getElementById("rows").innerHTML = shown.map(r =>
+    `<tr class="run${open.has(r.run) ? " open" : ""}" data-run="${esc(r.run)}">${COLUMNS.map(c => cell(r, c.key)).join("")}</tr>`
+    + (open.has(r.run) ? `<tr class="trials"><td colspan="${COLUMNS.length}">${trials(r)}</td></tr>` : "")
+  ).join("") || `<tr><td colspan="${COLUMNS.length}" class="empty">No matching jobs.</td></tr>`;
+}
+
+document.getElementById("q").addEventListener("input", render);
+document.getElementById("head").addEventListener("click", e => {
+  const th = e.target.closest("th");
+  if (!th || !COLUMNS.find(c => c.key === th.dataset.key).sort) return;
+  sortDir = th.dataset.key === sortKey ? -sortDir : -1;
+  sortKey = th.dataset.key;
+  render();
+});
+document.getElementById("rows").addEventListener("click", e => {
+  const row = e.target.closest("tr.run");
+  if (!row || e.target.closest("a")) return;
+  open.has(row.dataset.run) ? open.delete(row.dataset.run) : open.add(row.dataset.run);
+  render();
+});
+fetch("index.json").then(r => r.json()).then(data => { runs = data; render(); })
+  .catch(() => { document.getElementById("rows").innerHTML = `<tr><td class="empty">Could not load index.json; run make viz.</td></tr>`; });
+</script>
+</body>
+</html>

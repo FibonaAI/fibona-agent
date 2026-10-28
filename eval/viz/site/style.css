@@ -1,0 +1,75 @@
+/* harbor view's theme (shadcn zinc, square corners, Google Sans Code), so the two pages read as one. */
+:root {
+  --background: oklch(100% 0 0); --foreground: oklch(14.1% .005 285.823); --card: oklch(100% 0 0);
+  --muted: oklch(96.7% .001 286.375); --muted-foreground: oklch(55.2% .016 285.938); --border: oklch(92% .004 286.32);
+  --ring: oklch(70.5% .015 286.067); --pass: oklch(52.7% .154 150.069); --fail: oklch(57.7% .245 27.325);
+  --warn: oklch(55.5% .163 48.998); --info: oklch(54.6% .245 262.881);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(14.1% .005 285.823); --foreground: oklch(98.5% 0 0); --card: oklch(21% .006 285.885);
+    --muted: oklch(27.4% .006 286.033); --muted-foreground: oklch(70.5% .015 286.067); --border: oklch(30.23% .006 286.033);
+    --ring: oklch(55.2% .016 285.938); --pass: oklch(72.3% .219 149.579); --fail: oklch(70.4% .191 22.216);
+    --warn: oklch(75% .183 55.934); --info: oklch(70.7% .165 254.624);
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background); color: var(--foreground);
+       font: 14px/1.5 "Google Sans Code", ui-monospace, SFMono-Regular, Menlo, monospace; }
+main { padding: 24px; }
+header { margin-bottom: 16px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; }
+.controls { margin-bottom: 16px; }
+input { width: 100%; max-width: 420px; height: 36px; padding: 0 12px; background: transparent; color: var(--foreground);
+        border: 1px solid var(--border); border-radius: 0; font: inherit; outline: none; }
+input::placeholder { color: var(--muted-foreground); }
+input:focus { border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent); }
+.panel { border: 1px solid var(--border); background: var(--card); overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { height: 44px; padding: 8px 16px; text-align: left; vertical-align: middle; white-space: nowrap; }
+thead tr, tbody tr { border-bottom: 1px solid var(--border); }
+tbody tr:last-child { border-bottom: 0; }
+thead th { font-weight: 500; cursor: pointer; user-select: none; }
+thead th .arrow { color: var(--muted-foreground); margin-left: 4px; }
+tbody tr.run { cursor: pointer; transition: background-color .15s; }
+tbody tr.run:hover, tbody tr.run.open { background: color-mix(in oklab, var(--muted) 50%, transparent); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted-foreground); }
+.name a { color: inherit; text-decoration: none; }
+.name a:hover { text-decoration: underline; }
+.caret { display: inline-block; width: 14px; margin-right: 8px; color: var(--muted-foreground); transition: transform .15s; }
+tr.open .caret { transform: rotate(90deg); }
+code { font: inherit; font-size: 13px; }
+.chip { display: inline-block; padding: 0 8px; border: 1px solid var(--border); background: var(--muted); font-size: 12px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid currentColor; font-size: 12px; }
+.badge::before { content: ""; width: 6px; height: 6px; background: currentColor; }
+.ok { color: var(--pass); }
+.bad { color: var(--fail); }
+.warn { color: var(--warn); }
+.run-live { color: var(--info); }
+.rate { display: inline-flex; align-items: center; gap: 8px; }
+.bar { width: 64px; height: 6px; background: var(--muted); overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--pass); }
+/* Trials use the main table's grid: same 16px cell padding, names indented to line up under the run name. */
+tr.trials > td { height: auto; padding: 0; background: color-mix(in oklab, var(--muted) 50%, transparent); }
+.trial-list th { cursor: default; color: var(--muted-foreground);
+                 font-size: 12px; height: 36px; }
+.trial-list td { height: 40px; }
+.trial-list tr { border-bottom: 1px solid var(--border); }
+.trial-list tbody tr:last-child { border-bottom: 0; }
+.trial-list th:first-child, .trial-list td:first-child { padding-left: 38px; width: 40%; }  /* 16px cell padding + 14px caret + 8px gap. */
+.empty { height: auto; padding: 48px; text-align: center; color: var(--muted-foreground); }
+.links a { color: var(--muted-foreground); text-decoration: none; }
+.links a + a { margin-left: 16px; }
+.links a:hover { color: var(--foreground); text-decoration: underline; }
+/* run.html, after harbor view's job page: breadcrumb, mono title, one card per file. */
+.breadcrumb { display: flex; gap: 10px; font-size: 14px; color: var(--muted-foreground); margin-bottom: 12px; }
+.breadcrumb a { color: inherit; text-decoration: none; }
+.breadcrumb a:hover { color: var(--foreground); }
+.breadcrumb .current { color: var(--foreground); }
+.title { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.title h1 { font-size: 18px; font-weight: 400; letter-spacing: -0.01em; }
+#files { display: flex; flex-direction: column; gap: 16px; }
+.card { border: 1px solid var(--border); background: var(--card); padding: 24px 0; }
+.card h2 { font-size: 14px; font-weight: 600; line-height: 1; margin: 0 0 16px; padding: 0 24px; }
+.card pre { margin: 0; padding: 0 24px; overflow: auto; max-height: 480px; font: inherit; font-size: 13px; }
