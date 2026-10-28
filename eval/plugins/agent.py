@@ -1,6 +1,7 @@
 """Harbor installed agent: runs Fibona with bootstrap.py once per task inside the task container.
 
 steps/config.py mounts /opt/fibona (wheels, uv and Python, copied by job.py), so install runs offline.
+After the run, Fibona's run logs become agent/trajectory.json (ATIF), which `harbor view` shows; see plugins/utils.py.
 """
 
 import json
@@ -10,6 +11,8 @@ from pathlib import Path
 
 from harbor.agents.capabilities import AgentCapabilities
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
+from harbor.utils.trajectory_utils import format_trajectory_json
+from plugins.utils import convert
 
 # The bootstrap cell each task runs; see bootstrap.py.
 BOOTSTRAP = (Path(__file__).parent / "bootstrap.py").read_text()
@@ -71,6 +74,13 @@ class Fibona(BaseInstalledAgent):
         if seen:
             for key, value in totals.items():
                 setattr(context, key, None if key in missing else value)
+        try:
+            trajectory = convert(self.logs_dir, self.model_name)
+        except Exception:
+            self.logger.warning("Could not convert Fibona's run logs to a trajectory", exc_info=True)
+            return
+        if trajectory is not None:
+            (self.logs_dir / "trajectory.json").write_text(format_trajectory_json(trajectory.to_json_dict()))
 
     async def install(self, environment) -> None:
         await self.exec_as_agent(
@@ -103,7 +113,8 @@ class Fibona(BaseInstalledAgent):
             )
         await self.exec_as_agent(
             environment,
-            command='export PATH="$HOME/.local/bin:/opt/fibona/dist:$PATH"; '
+            command=f"printf %s {shlex.quote(instruction)} > /logs/agent/instruction.txt; "  # The trajectory's first step.
+            'export PATH="$HOME/.local/bin:/opt/fibona/dist:$PATH"; '
             "$HOME/.local/bin/fibona --boot-mode $HOME/fibona-bootstrap.py "
             f"{shlex.quote(instruction)} < /dev/null > /logs/agent/fibona.txt 2>&1; "
             'status=$?; tail -c 65536 /logs/agent/fibona.txt; exit "$status"',
