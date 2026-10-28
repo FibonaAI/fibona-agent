@@ -2,12 +2,10 @@
 
 import subprocess
 import time
-from uuid import NAMESPACE_URL, uuid5
 
 import volcenginesdkecs as ecs
 from plugins.hosts import Resources
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
-from steps.retry import network_retry, transient
 from volcenginesdkcore.rest import ApiException
 
 TAG = "fibona-job"
@@ -37,7 +35,6 @@ def launch(run: str, group: int, spec: ECSSpec) -> list[str]:
         volume_type="ESSD_PL0", size=size, delete_with_instance=True
     )
     request = ecs.RunInstancesRequest(
-        client_token=str(uuid5(NAMESPACE_URL, f"{run}/{group}")),
         zone_id=spec.zone,
         instance_type_id=spec.instance_type,
         image_id=spec.image_id,
@@ -56,34 +53,13 @@ def launch(run: str, group: int, spec: ECSSpec) -> list[str]:
         ),
         tags=[ecs.TagForRunInstancesInput(key=TAG, value=run)],
     )
-
-    @network_retry
-    def create():
-        try:
-            return ecs.ECSApi().run_instances(request).instance_ids
-        except Exception as error:
-            if not transient(error):
-                raise
-            # A lost response may hide a successful creation. Reconcile before resending
-            # the same idempotency token; never issue a fresh allocation request.
-            existing = [
-                i.instance_id
-                for i in describe(tag_filters=[ecs.TagFilterForDescribeInstancesInput(key=TAG, values=[run])])
-                if i.instance_name == request.instance_name
-            ]
-            if len(existing) == spec.count:
-                return existing
-            raise
-
-    return create()
+    return ecs.ECSApi().run_instances(request).instance_ids
 
 
 def describe(**filters) -> list:
     api, instances, token = ecs.ECSApi(), [], None
     while True:
-        result = network_retry(api.describe_instances)(
-            ecs.DescribeInstancesRequest(max_results=100, next_token=token, **filters)
-        )
+        result = api.describe_instances(ecs.DescribeInstancesRequest(max_results=100, next_token=token, **filters))
         instances += result.instances or []
         token = result.next_token
         if not token:
@@ -117,7 +93,7 @@ def release(run: str) -> list[str]:
     api = ecs.ECSApi()
     for instance in ids:
         try:
-            network_retry(api.delete_instance)(ecs.DeleteInstanceRequest(instance_id=instance))
+            api.delete_instance(ecs.DeleteInstanceRequest(instance_id=instance))
         except ApiException as error:
             if error.status != 404 and "NotFound" not in str(error.body):
                 raise
