@@ -20,9 +20,11 @@ const FILES = ["config.yaml", "config.resolved.yaml", "meta.json", "git.patch", 
 const run = new URLSearchParams(location.search).get("run") || "";
 const esc = s => String(s).replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[c]);
 const base = `runs/${encodeURIComponent(run)}/`;
-// Same default as index.html: harbor view on the next port, or ?harbor=<url>.
+// Same default as index.html: harbor.f.x over the VPN, the next port otherwise, or ?harbor=<url>.
 const HARBOR = new URLSearchParams(location.search).get("harbor")
-  || `${location.protocol}//${location.hostname}:${Number(location.port || 80) + 1}`;
+  || (location.hostname.endsWith(".f.x")
+    ? `${location.protocol}//harbor.f.x`
+    : `${location.protocol}//${location.hostname}:${Number(location.port || 80) + 1}`);
 document.getElementById("run").textContent = document.getElementById("crumb").textContent = run;
 document.title = `${run} · Fibona Eval`;
 document.getElementById("links").innerHTML =
