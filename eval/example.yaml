@@ -2,11 +2,15 @@
 name: tb2-smoke                 # The run is <UTC time>-<name>: eval/experiments/<run>/ and <archive>/<run>/.
 archive: tos://fibona-eval-archive/jobs
 dataset: terminal-bench@2.0     # Harbor dataset, as `harbor run -d` takes it.
+# agent: my_package.agent:Agent  # Optional Harbor agent name or importable module:Class.
 model: openai/gpt-6-astra       # As `harbor run -m` takes it.
-model_settings:                 # call_me defaults and API retries; omit any to keep Fibona's own.
-  reasoning_effort: high        # medium, high or xhigh, when the agent doesn't pick one (Fibona: medium).
+# base_url: https://api.example.com/v1  # Optional endpoint; API key stays in the environment.
+model_settings:                 # Shared model settings; omitted values use environment/agent defaults.
+  reasoning_effort: high        # Reasoning effort; supported values depend on the model and agent.
   max_output_tokens: 32768      # Per call, reasoning included, when the agent doesn't set one.
-  api_retries: 8                # OpenAI client retries per call.
+  api_retries: 8                # SDK retries per call, separate from Harbor trial retries.
+  # context_tokens: 1048576     # Input + output budget for agents with a context-window policy.
+  # extra_body: {}             # Optional JSON request extensions, interpreted by the model API.
 settings:
   user: harbor-runner
   pk: ~/.ssh/fibona-harbor-runner   # Private key path on the machine running make.
@@ -28,7 +32,9 @@ groups:                         # First matching group wins; put an optional cat
       key_pair: fibona-songwei
     tasks: []                   # Empty or omitted: all remaining tasks.
 # Per-task CPU/memory/GPU requirements are read from the dataset, including separate verifiers.
-# Use extra_args: ["-n", "16"] to add a global trial cap for an API rate limit.
 # exclude: ["*-gpu"]            # Task name globs to skip.
 limit: 2                        # At most this many tasks; remove for a full run.
-# extra_args: ["--timeout-multiplier", "2"]   # Passed to `harbor run` as is.
+# extra_args are passed to `harbor run`; combine options in one list as needed.
+# extra_args: ["-n", "16"]                       # Cap concurrent trials.
+# extra_args: ["--ek", "compose_up_timeout_sec=1800"]  # Startup deadline (default 180s); excludes image pull.
+# extra_args: ["--timeout-multiplier", "2"]        # Scale Harbor task timeouts.

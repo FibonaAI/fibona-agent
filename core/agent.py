@@ -183,7 +183,7 @@ class Mind:
         body.update(
             model=self.model,
             instructions=self.instructions,
-            reasoning={"effort": effort if effort in {"medium", "high", "xhigh"} else "medium"},
+            reasoning={"effort": effort if effort in {"medium", "high", "xhigh", "max"} else "medium"},
             tools=[*tools, SET_NEXT_CELL],
             parallel_tool_calls=False,
             store=False,

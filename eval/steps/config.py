@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from plugins.hosts import Resources, SSHSettings
-from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, PositiveInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, NonNegativeInt, PositiveInt, model_validator
 from steps.workers import ECSSpec
 
 # Synced to every host by job.py. EC2-style environments bind host paths at the same container path.
@@ -16,15 +16,32 @@ MOUNTS = [{"type": "bind", "source": "/opt/fibona", "target": "/opt/fibona", "re
 
 
 class ModelSettings(BaseModel):
-    """call_me defaults (plugins/bootstrap.py) and API retries, passed to plugins.agent; unset ones keep Fibona's own."""
-
     model_config = ConfigDict(extra="forbid")
 
-    reasoning_effort: Literal["medium", "high", "xhigh"] | None = (
-        None  # When the agent doesn't pick one; Fibona: medium.
-    )
-    max_output_tokens: PositiveInt | None = None  # Per call, reasoning included, when the agent doesn't set one.
-    api_retries: NonNegativeInt | None = None  # OpenAI client retries per call; the plugin's default is 8.
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
+    max_output_tokens: PositiveInt | None = None
+    api_retries: NonNegativeInt | None = None
+    context_tokens: PositiveInt | None = None
+    extra_body: dict[str, JsonValue] | None = None
+
+    @model_validator(mode="after")
+    def output_fits_context(self) -> "ModelSettings":
+        if self.context_tokens is not None and self.max_output_tokens is not None:
+            if self.max_output_tokens >= self.context_tokens:
+                raise ValueError("max_output_tokens must be smaller than context_tokens")
+        return self
+
+    def environment(self, model: str, base_url: str | None = None) -> dict[str, str]:
+        """Explicit YAML values override optional environment defaults; credentials remain private."""
+        keys = ("OPENAI_API_KEY", "OPENAI_BASE_URL", *(f"FIBONA_{key.upper()}" for key in type(self).model_fields))
+        env = {key: os.environ[key] for key in keys if os.environ.get(key)}
+        env.setdefault("FIBONA_API_RETRIES", "8")
+        for key, value in self.model_dump(exclude_none=True).items():
+            env[f"FIBONA_{key.upper()}"] = json.dumps(value) if isinstance(value, dict) else str(value)
+        if base_url is not None:
+            env["OPENAI_BASE_URL"] = base_url
+        env["FIBONA_MODEL"] = model
+        return env
 
 
 class JobGroup(BaseModel):
@@ -50,6 +67,8 @@ class JobConfig(BaseModel):
     archive: str = Field(pattern=r"^tos://")  # tos://bucket/prefix; the job lands in <archive>/<run>/.
     dataset: str  # As `harbor run -d` takes it: name@version or org/name@ref.
     model: str  # As `harbor run -m` takes it, e.g. openai/gpt-6-astra.
+    base_url: str | None = Field(default=None, min_length=1)
+    agent: str = Field(default="plugins.agent:Fibona", min_length=1)  # Harbor name or module:Class.
     model_settings: ModelSettings = ModelSettings()
     settings: SSHSettings  # Shared SSH login, private key path and port for sync and Harbor.
     groups: list[JobGroup] = Field(min_length=1)  # First matching group supplies the task's hosts.
@@ -76,9 +95,11 @@ class JobConfig(BaseModel):
 
     def harbor_args(self, job_dir: Path) -> list[str]:
         """`harbor run` arguments: every task scheduled on these hosts through plugins.hosts."""
-        args = ["run", "-y", "-d", self.dataset, "-m", self.model, "-a", "plugins.agent:Fibona"]
+        args = ["run", "-y", "-d", self.dataset, "-m", self.model, "-a", self.agent]
+        if self.base_url is not None:
+            args += ["--ak", f"base_url={json.dumps(self.base_url)}"]
         for key, value in self.model_settings.model_dump(exclude_none=True).items():
-            args += ["--ak", f"{key}={value}"]
+            args += ["--ak", f"{key}={json.dumps(value)}"]
         args += ["--env", "plugins.hosts:SSHHosts"]
         args += ["--ek", "settings=" + json.dumps(self.settings.model_dump(mode="json"))]
         args += [
