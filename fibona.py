@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from core.agent import INSTRUCTIONS, Agent, Mind
+from core.agent import INSTRUCTIONS, REASONING_EFFORTS, Agent, Mind
 from core.env import IPythonEnv
 
 
@@ -18,6 +18,18 @@ def main() -> int:
     )
     parser.add_argument(
         "--boot-mode", required=True, help="minimal, terminal, or a Python file to execute as the bootstrap cell."
+    )
+    parser.add_argument(
+        "--lowest-reasoning-effort",
+        choices=REASONING_EFFORTS,
+        default="medium",
+        help="Minimum reasoning effort for call_me (default: medium).",
+    )
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=REASONING_EFFORTS,
+        default="medium",
+        help="Default reasoning effort for call_me, raised to the minimum if needed (default: medium).",
     )
     args, remaining_args = parser.parse_known_args()
     bootstrap_file = (
@@ -33,7 +45,13 @@ def main() -> int:
         parser.error("bootstrap cell must contain Python code")
     try:
         with OpenAI(max_retries=int(os.getenv("FIBONA_API_RETRIES", "2"))) as client:
-            mind = Mind(client, os.getenv("FIBONA_MODEL", "gpt-6-astra"), INSTRUCTIONS)
+            mind = Mind(
+                client,
+                os.getenv("FIBONA_MODEL", "gpt-6-astra"),
+                INSTRUCTIONS,
+                lowest_reasoning_effort=args.lowest_reasoning_effort,
+                reasoning_effort=args.reasoning_effort,
+            )
             env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
             env.bind(argv=remaining_args)  # Arguments this launcher did not consume, for the bootstrap to read.
             Agent(mind, cwd=".").run(bootstrap_cell, env=env)

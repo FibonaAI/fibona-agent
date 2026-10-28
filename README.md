@@ -85,6 +85,11 @@ Requires Python 3.12+ and `uv`.
      uv run --env-file .env fibona.py --boot-mode ./your_custom_bootstrap.py
      ```
 
+Use `--reasoning-effort high` to set the default for `call_me`, and
+`--lowest-reasoning-effort medium` to set its minimum. Both default to `medium` and accept
+`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Requests below the minimum
+are raised to it, including the default. The selected model must support the chosen effort.
+
 Each run automatically records cells and every model request, response, or error (including intermediate tool calls) in `logs/<timestamp>-<run-id>.jsonl`.
 
 ## Use the core as a library
