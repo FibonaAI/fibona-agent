@@ -22,9 +22,12 @@
   </div>
 </main>
 <script>
-// harbor view runs on its own origin (it only works at the root path): the next port by default (make viz), or ?harbor=<url>.
+// harbor view runs on its own origin (it only works at the root path): harbor.f.x over the VPN,
+// the next port otherwise (make viz), or ?harbor=<url>.
 const HARBOR = new URLSearchParams(location.search).get("harbor")
-  || `${location.protocol}//${location.hostname}:${Number(location.port || 80) + 1}`;
+  || (location.hostname.endsWith(".f.x")
+    ? `${location.protocol}//harbor.f.x`
+    : `${location.protocol}//${location.hostname}:${Number(location.port || 80) + 1}`);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
 const rate = r => r.n_trials ? r.n_passed / r.n_trials : null;
 const ago = t => {
