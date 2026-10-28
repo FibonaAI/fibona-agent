@@ -141,7 +141,9 @@ class Mind:
         """Wake the mind. Exposed to cells as `call_me`.
 
         The returned output contains every round's items and host tool results, in order.
-        Usage is summed across rounds; it is unknown if any round omits usage.
+        Usage sums known values across rounds; its custom `incomplete` flag is True if any round
+        omits usage, in which case the totals may undercount. Otherwise the flag is False.
+        It is None only if no round reports usage.
         Other Response fields (id, status, etc.) describe the final API response.
 
         input: a string or list of input items, passed positionally or by keyword; defaults to empty.
@@ -190,7 +192,7 @@ class Mind:
         )
         outputs = []
         usage = None
-        usage_complete = True
+        usage_incomplete = False  # Whether any round omitted usage.
         metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_me"}
         log_info(logger, "model_request", **metadata, request={**body, "input": items})
         while True:
@@ -209,34 +211,21 @@ class Mind:
                 )
                 raise
             outputs.extend(response.output)
-            if response.usage is None:
-                usage_complete = False
-            elif usage is None:
-                usage = response.usage.model_copy(deep=True)
-            else:
-                for field in ("input_tokens", "output_tokens", "total_tokens"):
-                    setattr(usage, field, getattr(usage, field) + getattr(response.usage, field))
-                for field in ("input_tokens_details", "output_tokens_details"):
-                    total, current = getattr(usage, field), getattr(response.usage, field)
-                    for key in type(total).model_fields:
-                        a, b = getattr(total, key, None), getattr(current, key, None)
-                        setattr(total, key, a + b if a is not None and b is not None else None)
-                if hasattr(usage, "cost"):  # A provider extra, e.g. OpenRouter's cost in USD.
-                    a, b = usage.cost, getattr(response.usage, "cost", None)
-                    usage.cost = a + b if a is not None and b is not None else None
-            host = next(
-                (c for c in response.output if c.type == "function_call" and c.name == SET_NEXT_CELL["name"]), None
-            )
-            if host is None:
-                response = response.model_copy(update={"output": outputs, "usage": usage if usage_complete else None})
+            usage_incomplete = usage_incomplete or response.usage is None
+            usage = _add_usage(usage, response.usage)
+            next_cell_call = _find_next_cell_call(response)
+            if next_cell_call is None:
+                if usage is not None:
+                    usage.incomplete = usage_incomplete
+                response = response.model_copy(update={"output": outputs, "usage": usage})
                 log_info(logger, "model_response", **metadata, response=response)
                 return response
             output = ResponseFunctionToolCallOutputItem(
                 id="fco_" + uuid4().hex,
                 type="function_call_output",
-                call_id=host.call_id,
+                call_id=next_cell_call.call_id,
                 status="completed",
-                output=_run_host_tool(host, submit),
+                output=_run_host_tool(next_cell_call, submit),
             )
             outputs.append(output)
             # Replay every output item, including encrypted reasoning, without server-side storage.
@@ -272,9 +261,36 @@ class Mind:
         return response.output_text
 
 
+def _add_usage(total, current):
+    """Accumulate usage without changing the original responses; unknown details stay unknown."""
+    if current is None:
+        return total
+    if total is None:
+        return current.model_copy(deep=True)
+    for field in ("input_tokens", "output_tokens", "total_tokens"):
+        setattr(total, field, getattr(total, field) + getattr(current, field))
+    for field in ("input_tokens_details", "output_tokens_details"):
+        details, incoming = getattr(total, field), getattr(current, field)
+        for key in type(details).model_fields:
+            a, b = getattr(details, key, None), getattr(incoming, key, None)
+            setattr(details, key, a + b if a is not None and b is not None else None)
+    if hasattr(total, "cost"):  # A provider extra, e.g. OpenRouter's cost in USD.
+        a, b = total.cost, getattr(current, "cost", None)
+        total.cost = a + b if a is not None and b is not None else None
+    return total
+
+
 def _input_items(value) -> list:
     """A string becomes one user message; a list of items is used as given."""
     return [{"role": "user", "content": value}] if isinstance(value, str) else list(value)
+
+
+def _find_next_cell_call(response: Response) -> ResponseFunctionToolCall | None:
+    """Return the first set_next_cell call, or None if there is no match."""
+    for item in response.output:
+        if item.type == "function_call" and item.name == SET_NEXT_CELL["name"]:
+            return item
+    return None
 
 
 def _run_host_tool(call: ResponseFunctionToolCall, submit: Submit) -> str:
