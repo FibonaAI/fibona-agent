@@ -356,9 +356,11 @@ If needed, inspect session variables via globals() and history to recover the ta
 Repair the failure and continue the program.
 """.strip()
 
-    def __init__(self, mind: Mind, *, cwd: str | Path | None = None):
+    def __init__(self, mind: Mind, *, cwd: str | Path | None = None, max_failures: int = 5):
         self.mind = mind
         self.cwd = Path(cwd).expanduser().resolve() if cwd is not None else None
+        # Consecutive failed cells before the run ends: a repair that cannot run (e.g. call_me itself fails) must not loop.
+        self.max_failures = max_failures
 
     def run(
         self,
@@ -377,7 +379,7 @@ Repair the failure and continue the program.
         The configured cwd must exist; the caller's working directory is restored afterward.
         Cells and call_me calls are automatically logged to a separate logs/*.jsonl file for each run
         ($FIBONA_LOG_DIR overrides logs/).
-        Interruptions propagate.
+        Interruptions propagate; after max_failures cells fail in a row, RuntimeError ends the run.
         Cells execute synchronously in the calling thread.
         """
         with chdir(self.cwd or Path.cwd()), run_logger() as logger:
@@ -388,6 +390,7 @@ Repair the failure and continue the program.
                 raise Quit
 
             code, summary = bootstrap_cell, "Run the bootstrap cell."
+            failures = 0
             while True:
                 slot = Slot()
                 cell_logger = logging.LoggerAdapter(logger, {"cell": memory.cell_count})
@@ -416,8 +419,12 @@ Repair the failure and continue the program.
                 memory.record(code, summary, result)
 
                 if result.error is None:
+                    failures = 0
                     code, summary = slot.code, slot.summary
                     continue
+                failures += 1
+                if failures >= self.max_failures:
+                    raise RuntimeError(f"{failures} cells failed in a row; last error:\n{result.error[-4000:]}")
                 # Side effects of the failed cell are not rolled back; the mind repairs from here.
                 message = (
                     self.REPAIR
