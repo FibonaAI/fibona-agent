@@ -49,7 +49,7 @@ your memory.
 all items).
 - `input`: a string, or a list of messages and items.
 - Optional: `tools` and `tool_choice` for your own tools, `text` for structured output (e.g. `{"format":
-  {"type": "json_object"}}`), `reasoning={"effort": "high"}` to think harder (subject to the configured minimum).
+  {"type": "json_object"}}`), `reasoning={"effort": "high"}` to think harder (raised to the configured minimum if lower).
 
 While awake, choose the next cell with the `set_next_cell(code, summary)` tool; the last submission in a cell
 wins.
@@ -148,7 +148,15 @@ class Mind:
         for effort in (lowest_reasoning_effort, reasoning_effort):
             if effort not in REASONING_EFFORTS:
                 raise ValueError(f"Unknown reasoning effort: {effort!r}")
-        self.client, self.model, self.instructions = client, model, instructions
+        self.client, self.model = client, model
+        self.instructions = (
+            instructions
+            + "\n\n\n## Reasoning effort\n\n"
+            + f"For `call_me`, `reasoning_effort` (default) is `{reasoning_effort}` and "
+            + f"`lowest_reasoning_effort` (minimum) is `{lowest_reasoning_effort}`. "
+            + "Omitting `reasoning.effort` uses the default. Values below the minimum are raised to it, "
+            + "including the default."
+        )
         self.lowest_reasoning_effort = lowest_reasoning_effort
         self.reasoning_effort = reasoning_effort
 
