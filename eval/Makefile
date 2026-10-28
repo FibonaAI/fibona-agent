@@ -14,7 +14,7 @@ export UV_PYTHON_INSTALL_DIR := $(CURDIR)/python
 
 need = $(foreach v,$1,$(if $($v),,$(error $v is required)))
 
-.PHONY: job dist image
+.PHONY: job dist image viz
 
 # Run one benchmark job end to end and archive it: mirror task images, launch ECS workers, sync dist,
 # run Harbor, delete the workers, upload experiments/<run>/ to the config's TOS archive.
@@ -53,3 +53,14 @@ image:
 	ssh -i $(KEY) -o IdentitiesOnly=yes harbor-runner@$(REF) sudo -n bash -s bundle < build/image.sh \
 		| ssh root@$(HOST) 'rm -rf /tmp/fibona-image && mkdir -m 700 /tmp/fibona-image && tar x -C /tmp/fibona-image'
 	ssh root@$(HOST) bash -s -- "'$$(cat $(PUBKEY))'" < build/image.sh
+
+# Browse jobs: an index on VIZ_PORT whose runs and trials open in harbor view on VIZ_PORT+1.
+# Usage: make viz [VIZ_DATA=<jobs folder, e.g. unpacked TOS archives>] [VIZ_PORT=8080]  (rerun after new jobs)
+# localhost only: harbor view has no access control and can delete jobs; use an SSH tunnel.
+VIZ_PORT ?= 8080
+VIZ_DATA ?= experiments
+viz:
+	python3 viz/build.py $(VIZ_DATA)
+	trap 'kill 0' EXIT; \
+	uv run --no-project --with harbor==$(HARBOR_VERSION) harbor view viz/jobs --jobs --port $$(($(VIZ_PORT) + 1)) & \
+	python3 -m http.server -b 127.0.0.1 -d viz/site $(VIZ_PORT)
