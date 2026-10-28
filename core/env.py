@@ -29,12 +29,15 @@ class CellResult:
 class Tee(io.TextIOBase):
     """Write to several streams at once: show output live and capture it."""
 
-    def __init__(self, *streams):
+    def __init__(self, *streams, on_write: Callable[[str], None] | None = None):
         self.streams = streams
+        self.on_write = on_write
 
     def write(self, text: str) -> int:
         for stream in self.streams:
             stream.write(text)
+        if self.on_write is not None:
+            self.on_write(text)
         return len(text)
 
     def flush(self) -> None:
@@ -77,12 +80,19 @@ class IPythonEnv:
         self.shell.user_ns.update(names)
 
     @log_cell
-    def execute(self, code: str) -> CellResult:
-        """Return cell output and errors; Quit sets the quit flag, KeyboardInterrupt propagates."""
+    def execute(self, code: str, *, on_output: Callable[[str], None] | None = None) -> CellResult:
+        """Return cell output and errors; Quit sets the quit flag, KeyboardInterrupt propagates.
+
+        on_output receives each stdout/stderr text chunk as it is written.
+        """
         buffer = io.StringIO()
         self.bind(input=self.read_input)  # Rebound every cell, so a cell that replaced `input` does not persist.
-        stdout = Tee(buffer) if self.stdout is None else Tee(self.stdout, buffer)
-        stderr = Tee(buffer) if self.stderr is None else Tee(self.stderr, buffer)
+        stdout = (
+            Tee(buffer, on_write=on_output) if self.stdout is None else Tee(self.stdout, buffer, on_write=on_output)
+        )
+        stderr = (
+            Tee(buffer, on_write=on_output) if self.stderr is None else Tee(self.stderr, buffer, on_write=on_output)
+        )
         with redirect_stdout(stdout), redirect_stderr(stderr):
             result = self.shell.run_cell(code, store_history=False)
         error = result.error_before_exec or result.error_in_exec
