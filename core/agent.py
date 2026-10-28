@@ -71,7 +71,7 @@ can use them.
 
 - **Variables** persist. Inspect them with `globals()`; values are not automatically sent to you.
 - **`history`**: one `{code, summary, output, error, status}` dict per cell, including the current cell at the end.
-  `summary` describes the cell's intent. `output` combines stdout and stderr and updates as the cell writes to them.
+  `summary` describes the cell's intent. `output` records stdout and stderr as of now.
   `error` records failures. `status` is `running`, `completed`, or `error`. Finished records are copies.
 - Choose what to include in `input`. The host does not select or send working context for you.
 
