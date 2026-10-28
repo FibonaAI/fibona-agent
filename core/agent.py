@@ -49,7 +49,7 @@ your memory.
 all items).
 - `input`: a string, or a list of messages and items.
 - Optional: `tools` and `tool_choice` for your own tools, `text` for structured output (e.g. `{"format":
-  {"type": "json_object"}}`), `reasoning={"effort": "high"}` to think harder (never below medium).
+  {"type": "json_object"}}`), `reasoning={"effort": "high"}` to think harder (subject to the configured minimum).
 
 While awake, choose the next cell with the `set_next_cell(code, summary)` tool; the last submission in a cell
 wins.
@@ -126,6 +126,7 @@ PROTECTED = {
 }
 
 Submit = Callable[[str, str], None]
+REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
 class Mind:
@@ -135,8 +136,21 @@ class Mind:
     to decide the next cell.
     """
 
-    def __init__(self, client: OpenAI, model: str, instructions: str):
+    def __init__(
+        self,
+        client: OpenAI,
+        model: str,
+        instructions: str,
+        *,
+        lowest_reasoning_effort: str = "medium",
+        reasoning_effort: str = "medium",
+    ):
+        for effort in (lowest_reasoning_effort, reasoning_effort):
+            if effort not in REASONING_EFFORTS:
+                raise ValueError(f"Unknown reasoning effort: {effort!r}")
         self.client, self.model, self.instructions = client, model, instructions
+        self.lowest_reasoning_effort = lowest_reasoning_effort
+        self.reasoning_effort = reasoning_effort
 
     def wake(self, input=(), *, submit: Submit, logger=None, **body) -> Response:
         """Wake the mind. Exposed to cells as `call_me`.
@@ -157,7 +171,8 @@ class Mind:
             metadata, ...: passed through unchanged.
           Normalized or fixed by the mind:
             model, instructions: the mind itself.
-            reasoning: only `effort` is kept, raised to at least "medium".
+            reasoning: `effort` defaults to reasoning_effort and is raised to at least
+                lowest_reasoning_effort; other fields pass through.
             stream, background: always off; the full Response is returned.
             store, previous_response_id: stateless; to continue a conversation, put its
                 earlier items (e.g. `r.output`) into `input`.
@@ -175,7 +190,11 @@ class Mind:
             r = call_me(input="Tests failed:\\n" + log + "\\nFix them and submit the next cell.")
             print(r.output_text)
         """
-        effort = (body.get("reasoning") or {}).get("effort")
+        reasoning = body.get("reasoning") or {}
+        effort = reasoning.get("effort")
+        if effort not in REASONING_EFFORTS:
+            effort = self.reasoning_effort
+        effort = max(effort, self.lowest_reasoning_effort, key=REASONING_EFFORTS.index)
         items = _input_items(input)
         tools = [t for t in body.get("tools", []) if t.get("name") != SET_NEXT_CELL["name"]]
         body = {k: v for k, v in body.items() if k not in PROTECTED}
@@ -184,7 +203,7 @@ class Mind:
         body.update(
             model=self.model,
             instructions=self.instructions,
-            reasoning={"effort": effort if effort in {"medium", "high", "xhigh", "max"} else "medium"},
+            reasoning={**reasoning, "effort": effort},
             tools=[*tools, SET_NEXT_CELL],
             parallel_tool_calls=False,
             store=False,
