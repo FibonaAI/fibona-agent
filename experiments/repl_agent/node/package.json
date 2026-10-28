@@ -1,5 +1,5 @@
 {
-  "name": "fibona-new-core",
+  "name": "repl-agent",
   "private": true,
   "type": "module",
   "engines": { "node": ">=24" },

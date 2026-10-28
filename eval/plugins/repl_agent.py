@@ -6,17 +6,20 @@ from pathlib import Path
 
 from harbor.agents.capabilities import AgentCapabilities
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
+from harbor.models.trajectories.final_metrics import FinalMetrics
+from harbor.utils.trajectory_utils import format_trajectory_json
+from plugins.repl_trajectory import convert
 from steps.config import ModelSettings
 
-SOURCE = Path(__file__).resolve().parents[2] / "experiments/new_core"
+SOURCE = Path(__file__).resolve().parents[2] / "experiments/repl_agent"
 ENTRY = "await run_agent(interactive=True)  # noqa: F704"
 
 
-def batch_bootstrap(source: str) -> str:
+def batch_agent(source: str) -> str:
     """Keep cell 0 intact, replacing only the interactive entry with the eval entry."""
     if source.count(ENTRY) != 1 or not source.rstrip().endswith(ENTRY):
-        raise ValueError("new_core bootstrap entry changed; review the eval adapter")
-    entry = 'await run_agent(Path("/installed-agent/new-core-task.txt").read_text(), interactive=False)\n'
+        raise ValueError("repl_agent agent entry changed; review the eval adapter")
+    entry = 'await run_agent(Path("/installed-agent/repl-agent-task.txt").read_text(), interactive=False)\n'
     return source[: source.index(ENTRY)] + entry
 
 
@@ -97,7 +100,7 @@ def session_metrics(path: Path) -> dict:
     }
 
 
-class NewCore(BaseInstalledAgent):
+class ReplAgent(BaseInstalledAgent):
     capabilities = AgentCapabilities(skills=True, mcp_servers=True)
 
     def __init__(self, *args, base_url: str | None = None, **kwargs) -> None:
@@ -127,19 +130,19 @@ class NewCore(BaseInstalledAgent):
 
     @staticmethod
     def name() -> str:
-        return "fibona-new-core"
+        return "repl-agent"
 
     async def install(self, environment) -> None:
-        await environment.upload_dir(str(SOURCE), "/installed-agent/new-core")
-        bootstrap = self.logs_dir / "bootstrap.py"
-        bootstrap.write_text(batch_bootstrap((SOURCE / "bootstraps/python/main.py").read_text()))
-        await environment.upload_file(str(bootstrap), "/installed-agent/new-core-batch.py")
+        await environment.upload_dir(str(SOURCE), "/installed-agent/repl-agent")
+        agent = self.logs_dir / "agent.py"
+        agent.write_text(batch_agent((SOURCE / "python/agent.py").read_text()))
+        await environment.upload_file(str(agent), "/installed-agent/repl-agent/python/agent.py")
         await self.exec_as_agent(
             environment,
             command="set -eu; export UV_PYTHON_INSTALL_DIR=/opt/fibona/python; "
-            '/opt/fibona/dist/uv venv --python 3.12 --offline "$HOME/.local/share/fibona-new-core"; '
+            '/opt/fibona/dist/uv venv --python 3.12 --offline "$HOME/.local/share/fibona-repl-agent"; '
             "/opt/fibona/dist/uv pip install --offline --no-index --find-links /opt/fibona/dist "
-            '--python "$HOME/.local/share/fibona-new-core/bin/python" /opt/fibona/dist/fibona_agent-*.whl',
+            '--python "$HOME/.local/share/fibona-repl-agent/bin/python" /opt/fibona/dist/fibona_agent-*.whl',
         )
 
     @with_prompt_template
@@ -147,13 +150,13 @@ class NewCore(BaseInstalledAgent):
         instruction = self.task_instruction(instruction, environment)
         task = self.logs_dir / "instruction.txt"
         task.write_text(instruction)
-        await environment.upload_file(str(task), "/installed-agent/new-core-task.txt")
+        await environment.upload_file(str(task), "/installed-agent/repl-agent-task.txt")
         env = self.model_settings.environment(self.model_name or "gpt-6-astra", self.base_url)
         env["FIBONA_SESSION"] = "/logs/agent/session.jsonl"
         await self.exec_as_agent(
             environment,
-            command='"$HOME/.local/share/fibona-new-core/bin/python" /installed-agent/new-core/main.py '
-            "--bootstrap /installed-agent/new-core-batch.py < /dev/null > /logs/agent/console.txt 2>&1; "
+            command='"$HOME/.local/share/fibona-repl-agent/bin/python" /installed-agent/repl-agent/python/main.py '
+            "< /dev/null > /logs/agent/console.txt 2>&1; "
             'status=$?; tail -c 65536 /logs/agent/console.txt; exit "$status"',
             env=env,
         )
@@ -164,3 +167,17 @@ class NewCore(BaseInstalledAgent):
             setattr(context, key, value)
         context.metadata = {key: value for key, value in metrics.items() if key != "request_latencies"}
         (self.logs_dir / "metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
+        try:
+            trajectory = convert(self.logs_dir, self.model_name)
+            if trajectory is not None:
+                totals = metrics["totals"]
+                trajectory.final_metrics = FinalMetrics(
+                    total_prompt_tokens=totals["n_input_tokens"],
+                    total_completion_tokens=totals["n_output_tokens"],
+                    total_cached_tokens=totals["n_cache_tokens"],
+                    total_cost_usd=totals["cost_usd"],
+                    total_steps=len(trajectory.steps),
+                )
+                (self.logs_dir / "trajectory.json").write_text(format_trajectory_json(trajectory.to_json_dict()))
+        except Exception:
+            self.logger.warning("Could not convert REPL session to a trajectory", exc_info=True)

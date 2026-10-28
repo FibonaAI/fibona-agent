@@ -1,5 +1,5 @@
 /** Cell 0: the complete editable Node agent; evaluated as source, not imported by the host. */
-// var keeps bootstrap bindings replaceable in the native REPL.
+// var keeps agent bindings replaceable in the native REPL.
 var fs = await import("node:fs");
 var path = await import("node:path");
 var os = await import("node:os");
@@ -9,7 +9,7 @@ var { createInterface } = await import("node:readline");
 var { format } = await import("node:util");
 var { setTimeout: sleep } = await import("node:timers/promises");
 
-// GPT-6 Astra defaults, matching the Python bootstrap; adjust when changing providers.
+// GPT-6 Astra defaults, matching the Python agent; adjust when changing providers.
 var model_options = {
   model: process.env.FIBONA_MODEL ?? "gpt-6-astra",
   max_output_tokens: 128000,
@@ -78,9 +78,10 @@ Failure, retries and code rollback do not automatically undo existing external e
 
 Model output and user presentation are separate channels. \`console.log(...)\` writes output that is recorded
 and returned to the model; \`display(...)\` presents to the user without automatically entering model
-context. Write a value to both channels if both audiences need it. Model reply text is recorded but
-not automatically shown to the user. Use \`display(...)\` for progress, questions before input(),
-and the final answer before ending the turn.
+context. Write a value to both channels if both audiences need it. Your ordinary reply text is
+shown to the user automatically, including replies alongside tool calls. Use ordinary replies for
+progress and final answers; use \`display(...)\` for user-facing content produced inside a cell,
+including questions before input(). Captured cell output is feedback for you, not user presentation.
 
 Use var or assignments for editable top-level definitions; const/let redeclarations can conflict.
 Import modules with await import(...). Async input() returns null at EOF.`,
@@ -117,7 +118,7 @@ check the composed prompt for contradictions after edits and remove guidance tha
 // Session storage: append-only facts and read-only history views.
 var Session = class Session {
   /** Read records/views without modifying them; they are not protected snapshots.
-   * Bootstrap source: session.records.findLast(r => r.type === "source").code
+   * Agent source: session.records.findLast(r => r.type === "source").code
    * Later definitions: session.cells, checked against live bindings.
    */
   constructor(file = null) {
@@ -195,7 +196,7 @@ var cell_tool = {
   strict: true,
   parameters: { type: "object", properties: { code: { type: "string" } }, required: ["code"], additionalProperties: false },
 };
-var execute = run_cell; // Preserve the runtime's raw executor before replacing the tool.
+var execute = run_cell; // Preserve the REPL's raw executor before replacing the tool.
 var active_cell = new AsyncLocalStorage();
 
 /** Record execution, returning metadata, output, error and status. Never undo partial effects.
@@ -418,6 +419,14 @@ var agent_step = async function agent_step(items) {
         reason: status, error_code: code, delay_seconds: delay });
       if (delay) await sleep(delay * 1000);
     }
+    for (const item of response.output) {
+      if (item.type !== "message") continue;
+      for (const part of item.content) {
+        if (part.type === "output_text" || part.type === "refusal") {
+          console_write((part.type === "output_text" ? part.text : part.refusal) + "\n");
+        }
+      }
+    }
     const calls = response.output.filter(item => item.type === "function_call");
     if (!calls.length) return "completed";
     for (const call of calls) {
@@ -461,7 +470,7 @@ var recover = async function recover(reason) {
     + "Read history in small chunks and inspect current state before acting. Repair or roll back the fault; keep the core capabilities unchanged. "
     + "Do not replay completed effects or execute the original task here. Do not invoke the work loop during repair. "
     + "The main context is paused, not reset. Change it or leave continuation information only as needed for the repair. "
-    + "Verify what you can, then finish your response when ready to resume. The bootstrap will try the repaired work loop next.";
+    + "Verify what you can, then finish your response when ready to resume. The agent will try the repaired work loop next.";
   session.append("mode", { name: "recovery", reason, content: note });
   let status = "failed";
   try {
@@ -492,10 +501,16 @@ var recover = async function recover(reason) {
 };
 
 // Conversation entry: user input, mode entry and reader lifetime.
-// Interaction is bootstrap-owned. Create the iterator before any await so piped lines are retained.
+// Interaction is agent-owned. Create the iterator before any await so piped lines are retained.
 var console_write = process.stdout.write.bind(process.stdout);
-// User-facing output only; rendered values are not appended to session or context.
-var display = (...values) => console_write(format(...values) + "\n");
+// User-facing text is recorded separately and never projected into model input.
+var display = (...values) => {
+  const active = active_cell.getStore();
+  const log = active?.log ?? session;
+  const text = format(...values) + "\n";
+  log.append("display", { cell_id: active?.cell_id ?? null, text });
+  return console_write(text);
+};
 var reader = null, input_lines = null;
 var input = async function input(prompt = "") {
   if (!reader) {
@@ -533,7 +548,7 @@ var run_agent = async function run_agent(user_input = null, { interactive = fals
   }
 };
 
-// Initialize runtime state once, after all definitions are available.
+// Initialize agent state once, after all definitions are available.
 var session_path = process.env.FIBONA_SESSION ?? path.join(os.homedir(), ".local/state/fibona/sessions", `${randomUUID()}.jsonl`);
 var session = new Session(session_path);
 var context = new Context(session);
