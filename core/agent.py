@@ -49,7 +49,8 @@ your memory.
 all items).
 - `input`: a string, or a list of messages and items.
 - Optional: `tools` and `tool_choice` for your own tools, `text` for structured output (e.g. `{"format":
-  {"type": "json_object"}}`), `reasoning={"effort": "high"}` to think harder (raised to the configured minimum if lower).
+  {"type": "json_object"}}`), `reasoning={"effort": "high"}` to set the reasoning effort
+  (values below `lowest_reasoning_effort` are raised to it).
 
 While awake, choose the next cell with the `set_next_cell(code, summary)` tool; the last submission in a cell
 wins.
