@@ -9,6 +9,7 @@ leaves them, tagged fibona-job=<run> in ECS.
 import getpass
 import json
 import os
+import shlex
 import shutil
 import signal
 import socket
@@ -22,7 +23,7 @@ from pathlib import Path
 
 import volcenginesdkcore
 import yaml
-from steps import archive, code, deploy, profiles, workers
+from steps import archive, code, profiles, workers
 from steps.config import JobConfig, JobGroup, ssh_command
 from steps.images import ensure_images
 
@@ -131,11 +132,13 @@ def main() -> int:
 
     exit_code, stop = 1, threading.Event()
     try:
-        deploy.distribution_paths(Path.cwd())
         ensure_images(config, job_dir / "images.json")
         resolved = config.model_copy(update={"groups": launch_workers(config, run, job_dir)})
         (job_dir / "config.resolved.yaml").write_text(yaml.safe_dump(resolved.model_dump(mode="json"), sort_keys=False))
-        deploy.deploy(resolved, Path.cwd())
+        # dist (our wheel, its dependency wheels, uv) and python go to /opt/fibona, which Harbor mounts.
+        for host in resolved.hosts:
+            ssh = shlex.join(resolved.ssh(host))
+            subprocess.run(["rsync", "-a", "--delete", "-e", ssh, "dist", "python", f"{host}:/opt/fibona/"], check=True)
         threading.Thread(target=profiles.every_five_minutes, args=(resolved, job_dir, stop), daemon=True).start()
         exit_code = run_harbor(resolved, job_dir)
     except BaseException as error:
@@ -147,7 +150,6 @@ def main() -> int:
         meta["finished_at"], meta["exit_code"] = now(), exit_code
         if (job_dir / "instances.json").exists():
             meta["instances"] = json.loads((job_dir / "instances.json").read_text())
-        if any(group.ecs for group in config.groups):
             try:
                 print("Deleted", *workers.release(run), flush=True)
             except Exception as error:
