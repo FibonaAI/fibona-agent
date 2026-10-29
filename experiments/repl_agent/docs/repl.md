@@ -31,11 +31,13 @@ first-cell agent awaits work
       → A resumes after B
 ```
 
-Each active cell belongs to one nested execution chain. A cell in that chain can await a child; a competing cell is rejected before its code runs or shared capture is disturbed, rather than queued for later execution. When a cell finishes or unwinds, execution ownership returns to its caller. The REPL does not schedule cells in the background.
+Each active cell belongs to one nested execution chain. A cell in that chain can await a child; a competing cell is rejected before its code runs rather than queued for later execution. When a cell finishes or unwinds, execution ownership returns to its caller. The REPL does not schedule cells in the background.
+
+The REPL accepts source only and has no wrapper hooks for agent policy. The agent independently guards its recording and shared capture before invoking raw execution, releasing that guard after its wrapper unwinds.
 
 Independent I/O may run concurrently inside a cell, provided the cell awaits completion and manages cleanup. Detached work falls outside this lifecycle: it can outlive the cell and escape its capture or cleanup. Execution ownership can be represented by tasks, frames or another platform mechanism; its purpose is to preserve sequential nesting and prevent overlapping competition.
 
-Python can associate execution with the current asynchronous task. JavaScript commonly carries context through asynchronous callbacks, but that context may also reach separately started siblings. Sharing an asynchronous context alone therefore does not establish that a call belongs to the active nested execution chain.
+Sharing execution context does not by itself establish membership in the active nested chain. Implementations must distinguish sequential nesting from competing calls.
 
 The first cell stays active while its interaction loop runs. It is agent source, not a recorded model tool call. A first tool cell can therefore have no recorded parent even though its raw evaluation is nested. REPL execution frames, source-history positions and recorded cell identities have different roles and need not share an index.
 

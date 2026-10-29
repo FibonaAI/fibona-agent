@@ -39,9 +39,9 @@ Generated history must not claim two terminal outcomes for the same operation, f
 
 ## Persistence
 
-Session can keep history in memory or persist it. With persistent storage, a fact enters the in-memory history only after a successful append to storage. A failed or uncertain write stops further recording and propagates the failure. Later loading must establish a usable history before normal work resumes.
+Session can keep history in memory or persist it. With persistent storage, a fact enters the in-memory history only after a successful append to storage. Encoding or validation failures before writing reject that append without disabling the session. A failed or uncertain write stops further recording and propagates the failure. Later loading must establish a usable history before normal work resumes.
 
-Single-writer versioned JSONL is a simple reference format. It permits inspection and append-only writes without a database. For this choice, validate the header, record identities and complete records; reject incompatible formats and interior corruption without overwriting them. An unparsable unfinished final fragment after a valid prefix may be discarded. A valid final record lacking a newline must be preserved. A parseable but invalid record is not a torn JSON fragment.
+The persistence encoding is an implementation choice. Loading must validate compatibility, record integrity and associations, rejecting corrupt data without overwriting evidence. Repair only identifiable incomplete trailing writes; do not discard valid records or interior corruption as incomplete writes.
 
 Other formats can use their own recovery mechanism while preserving append-only facts and the no-replay rule. Do not silently migrate old data or reuse a format version with incompatible meaning. Append-only history alone does not guarantee that a write survives power loss.
 
@@ -70,3 +70,5 @@ A model step interrupted during dispatch similarly resolves only its own unanswe
 Neither loading nor repair resends a request, replays source or assumes external effects were rolled back. An unanswered request may have reached the provider; an unfinished cell may have acted externally. Evidence should expose this uncertainty, not hide it behind an automatic retry.
 
 See [Context](context.md) for selection and reset, and [Recovery mode](recovery.md) for the repair flow.
+
+An explicit ending records the owning successful cell and final message. Projection includes this final assistant message after the tool result; trajectory export presents it as agent output. The cause of an explicit stop stays in history without claiming completion. Old sessions remain readable; loading does not invent endings for historical implicit completions.

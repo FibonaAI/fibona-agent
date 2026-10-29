@@ -19,13 +19,19 @@ The model acts through `run_cell`, which executes source in the persistent langu
 
 Distinguish complete, incomplete and failed responses. Only a complete accepted response may dispatch calls. Validate enough to identify each call unambiguously, pair its result and execute valid source. Invalid tool names or arguments produce an associated dispatch error without executing a cell. Missing or ambiguous call identities and malformed envelopes cannot be treated as successful empty responses. Provider-specific metadata that is accepted must remain safe through recording and projection; do not let optional metadata break otherwise usable history.
 
-Preserve complete provider output, including opaque items needed in later requests. Do not infer calls from code-like text or execute partial streaming output. Completed output with no calls ends the step; text plus calls does not. The provider adapter maps logical messages, accepted calls and results into its wire format without changing pairing or order. Missing usage is unknown, not zero.
+Preserve complete provider output, including opaque items needed in later requests. Do not infer calls from code-like text or execute partial streaming output. Completed output without calls does not end the step. Preserve its valid output and request a tool call with a continuation reminder, within the bounded attempt budget. The provider adapter maps logical messages, accepted calls and results into its wire format without changing pairing or order. Missing usage is unknown, not zero.
+
+## Explicit end of a turn
+
+`end_turn(message)` is an ordinary callable inside the directly dispatched model cell, not another model tool or a process exit. It requires a nonblank message and registers one ending intent for that cell. Nested direct cells cannot end their parent; nested model steps have their own scope. A later exception, timeout or cancellation discards the intent. Only a successfully recorded cell may commit the ending event, after pairing any skipped remaining batch calls. The event retains the final message for presentation, later context and trajectory export. Recording failure cannot become a successful end.
+
+Recovery uses the same capability to finish repair and resume normal work; it cannot finish the enclosing user turn. Explicit stops (see [failure boundaries](#failure-boundaries)) are not normal completion.
 
 ## Request and batch ownership
 
 Before sending, the agent records the request with a snapshot of the configuration selected for that attempt. If this record cannot be stored, the request is not sent. The response or request error is recorded afterward and associated with that request, preserving provider output, available usage and useful failure diagnostics. Failure to persist an outcome is a recording failure, not proof the request never happened.
 
-One model step's selected input stays stable across response retries. Its requests, accepted response, calls and results belong to the originating session even if cell code changes a global session binding. A direct unlinked cell belongs to the session selected when it starts. Subsequent steps may use a deliberately selected matching session/Context pair.
+One model step's selected input stays stable across retries of incomplete or failed responses. No-call continuation adds the preceding completed output and an explicit reminder; it never resends executed calls. Its requests, accepted response, calls and results belong to the originating session even if cell code changes a global session binding. A direct unlinked cell belongs to the session selected when it starts. Subsequent steps may use a deliberately selected matching session/Context pair.
 
 Later edits to settings do not change the recorded configuration. In a persisted session, if the process stops before an outcome is recorded, the selected configuration remains inspectable, while the provider's outcome remains unknown.
 
@@ -57,19 +63,25 @@ A deadline belongs to the execution invocation, not merely its session-local cel
 
 Expiry of the cell's own budget is an ordinary cell error with diagnostics and any available output; the next model step can inspect partial state. External cancellation is a request to stop, so it propagates without starting recovery or fallback. Always restore deadline resources and capture. Do not leave a timer that can interrupt a later cell or silently replace an unrelated active timer.
 
-Interruption coverage depends on the platform. Python asynchronous cancellation is delivered at supported waiting points; some synchronous work requires additional platform facilities. In JavaScript, a timer cannot run while the event loop is blocked, so racing a promise against a timer does not interrupt arbitrary synchronous code.
+Interruption support depends on the runtime. Implementations must state their supported interruption boundaries; execution must not be reported complete or shared capture released before evaluation actually exits.
 
 A deadline is not a subprocess supervisor, rollback mechanism or sandbox. It may leave child processes, I/O and other external effects running; inspect and clean up resources before retrying.
 
 ## Failure boundaries
 
+No-call responses use the same bounded response retries as incomplete/transient failures. Exhaustion raises an ordinary step error: normal work enters recovery, and recovery failure uses its existing fallback. Continuation transport errors retain their ordinary error semantics.
+
 | Failure | Required behavior |
 | --- | --- |
 | Invalid tool arguments or rejected competition | No source effects; an accepted identifiable call receives a dispatch error |
 | Ordinary cell exception or its own deadline expiry | Preserve observations and error result; no automatic replay |
-| Model request or normal context/loop failure | Propagate to the agent's recovery boundary |
+| Recoverable model request or normal context/loop failure | Propagate to the agent's recovery boundary |
+| Other permanent provider rejection | Normal work enters recovery, since broken input such as a damaged Context can cause it; the same rejection of recovery's own request stops instead of cycling through fallback |
+| Refusal, or a rejection the model cannot repair (credentials, permission, unknown model) | Stop explicitly; do not restart through recovery |
 | Unusable recording infrastructure | Propagate and clean up; do not attempt model-driven repair on unreliable history |
 | External cancellation | Propagate through request, cell and recovery wrappers; no new work or fallback |
+
+An explicit stop ends the current turn. An interactive session reports it and reads new input with the live environment intact; a single-task entry propagates it.
 
 Cleanup must not turn interruption into success or hide that recording failed. Preserve useful secondary diagnostics when cleanup also fails. A write of uncertain completion requires validation before further use of that storage.
 

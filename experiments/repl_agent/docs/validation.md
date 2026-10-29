@@ -26,9 +26,13 @@ Deadline behavior is limited by platform interruption support. Native code and c
 | --- | --- |
 | Fail request recording, change settings during a request, or restart a persisted session without a recorded outcome | A failed start prevents sending; the pre-send configuration snapshot stays unchanged; an absent outcome remains unknown and startup does not resend the request |
 | Receive incomplete/failed output with apparent calls | No partial effects; bounded policy retries or propagates; attempts remain inspectable |
-| Receive malformed calls or unsupported arguments | No ambiguous pairing or invalid execution; identifiable rejected calls receive errors |
+| Receive missing/duplicate call identities or unsupported arguments | No ambiguous pairing or invalid execution; identifiable rejected calls receive errors |
 | Receive opaque provider items or optional metadata | Accepted data remains usable through storage and subsequent projection |
-| Receive complete empty output or text plus calls | Empty output completes; calls execute in order and continue the step |
+| Receive empty, reasoning-only or text-only completed output | Continue with preserved output and a reminder; exhaustion enters recovery, and exhaustion during recovery uses its existing fallback |
+| Receive a refusal, an unrepairable rejection or another permanent rejection | Refusal and unrepairable rejection stop without recovery; other rejections enter recovery once and stop if recovery's own request is rejected; an interactive session keeps the live environment and reads new input |
+| Fail normal work and recovery persistently | Fallback work may start fresh recovery; after two consecutive fallbacks the next failure stops the turn with its cause recorded |
+| End a turn from a cell | Require a nonblank message and a successfully recorded directly dispatched cell; display once, retain final context, and keep the REPL usable for the next turn |
+| Fail after requesting end, nest model steps, or end before remaining batch calls | Failed intent does not finish; nested/recovery endings stay scoped; skipped calls receive results without executing |
 | Reset during either sibling in a response batch | Whole batch and both results remain paired, including completed siblings |
 | Reset with/without handoff, then fail reset persistence | No automatic model call/summary or live-state loss; failed reset does not change the boundary |
 | Inspect large output through Context | View may shorten; full evidence remains retrievable |
@@ -42,6 +46,7 @@ Deadline behavior is limited by platform interruption support. Native code and c
 
 | Scenario | Evidence |
 | --- | --- |
+| Add and replace a local tool, then reset or restart | Real cell callers use the current binding; failed replacement restores the function and catalog entry; reset/recovery preserve the catalog, restart does not install recorded tools; only run_cell remains in API tools |
 | Maintain task notes through reset and recovery | Notes survive in memory, can be revised, and appear in model input only through explicit selection/output |
 | Restart with persisted history | Task notes/live objects are not silently restored; continuation guidance makes the distinction clear |
 | Break normal Context or loop | Independent recovery input can inspect the same environment and return to the original turn |

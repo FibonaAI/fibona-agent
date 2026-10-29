@@ -20,11 +20,13 @@ Session history preserves what happened; context selects what the model sees nex
 
 Output has two audiences. `print` in Python and `console.log` in Node provide recorded observations to the model. `display` presents progress, questions and answers to the user without automatically adding the rendered values to model context. Accepted model reply text is automatically shown to the user and retained in history; `display` is for user-facing content produced inside a cell.
 
+Use `tool_catalog` to discover local helpers, then inspect and call their current functions. Add reusable tools after checking them; the model API still exposes only `run_cell`. The [local-tool convention](docs/agent/README.md#local-tools) covers documentation, replacement and explicit persistence.
+
 Changes made in the live environment do not automatically update source files on disk.
 
 ## Run
 
-From the repository root, configure `.env` with `OPENAI_API_KEY`. Set `OPENAI_BASE_URL` for a compatible Responses API service and `FIBONA_MODEL` to select a model.
+From the repository root, configure `.env` with `OPENAI_API_KEY`; startup stops if it is missing. Set `OPENAI_BASE_URL` for a compatible Responses API service and `FIBONA_MODEL` to select a model.
 
 ```sh
 # Python 3.12+, using the project's dependencies
@@ -56,14 +58,13 @@ Model request defaults are grouped at the top of each agent in `model_options`; 
 
 ## Implementations
 
-Each language keeps its launcher, REPL, complete agent and tests together:
+Each language keeps its launcher, REPL and complete agent together:
 
 ```text
 python/                  node/
   main.py                  main.js
   repl.py                  repl.js
   agent.py                 agent.js
-  tests/                   tests/
                            package.json
 docs/                    Project and agent design
 ```
@@ -100,7 +101,7 @@ from the native session without modifying it; incomplete replies do not become e
 tool calls. New sessions also record user-facing `display(...)` text, grouped with its owning action in the trajectory and retained in `console.txt`. The converter preserves full code and output without truncation; large traces may take longer to load. Older sessions without display records still require `console.txt` for that output. Missing usage remains unknown rather
 than zero. These files are included in the job archive.
 
-The timeline groups each model action with its display output and nested cell results. Compact timing/status summaries accompany the action; full timestamps and source snapshots remain in extension data, accessible in the trajectory JSON from Harbor’s Agent files tab; structured details and every parsed native record are retained in ATIF extension fields, including provider metadata and unknown event types. Missing or invalid timestamps remain unknown. Unreadable log fragments are retained as base64 with their line numbers. This preserves recorded evidence, not unrecorded external effects.
+The timeline groups each model action with its display output and nested cell results. Request/cell timing, cell status, full timestamps and source snapshots remain in extension data, accessible in the trajectory JSON from Harbor’s Agent files tab; structured details and every parsed native record are retained in ATIF extension fields, including provider metadata and unknown event types. Missing or invalid timestamps remain unknown. Unreadable log fragments are retained as base64 with their line numbers. This preserves recorded evidence, not unrecorded external effects.
 
 ## Further reading
 

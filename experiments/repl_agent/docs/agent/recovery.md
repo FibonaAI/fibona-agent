@@ -6,7 +6,7 @@ For example, the agent may replace its Context policy and introduce a bug. The n
 
 ## When recovery begins
 
-Recovery begins when an ordinary error escapes the normal work loop. This includes errors in input construction, an exceeded context budget, or a model step that cannot complete after its response attempts.
+Recovery begins when an ordinary error escapes the normal work loop. This includes errors in input construction, an exceeded context budget, or a recoverable model failure that persists after its response attempts. Refusal and rejections the model cannot repair stop directly. Other permanent rejections enter recovery; the same rejection of a recovery request stops ([failure boundaries](execution.md#failure-boundaries)).
 
 An ordinary cell error has a different path: its output and diagnostics become a tool result, which the next normal model step can inspect. External cancellation ends the run. Unusable execution, model access or recording infrastructure can prevent recovery itself from operating. Initialization failures also propagate directly because the agent has not yet established a working environment for repair.
 
@@ -36,7 +36,7 @@ This input is built directly from Session, independently of normal Context. Reco
 
 Repair uses the shared model step to inspect definitions, read relevant history, change code or restore an earlier definition. Its effects happen in the original environment. It does not resume the user's task or call the normal work loop while repair is still in progress.
 
-A complete response containing tool calls continues repair. A complete response without calls ends it. The agent records the exit and tries the normal loop again for the same user turn. The user message is not appended again, and no new input is read.
+Tool calls continue repair until a successful cell commits `end_turn(message)` for this recovery invocation. The agent records the exit and tries the normal loop again for the same user turn. The user message is not appended again, and no new input is read.
 
 Recovery observations remain in history but do not automatically enter the normal working context or its usage estimate. Successful return does not itself reset normal Context. The next normal iteration establishes whether the repaired capability actually works; a failure there can start a fresh recovery invocation.
 
@@ -49,9 +49,11 @@ If repair fails with an ordinary error, recovery performs one fallback:
 3. Reset it with a handoff pointing to the original task, prior progress and failure details.
 4. Resume normal work with a matching session and Context.
 
+Fallback work may fail and start a fresh recovery. If normal work fails again after two consecutive recoveries have fallen back, the turn stops explicitly instead of cycling; a persistent fault such as broken model access would otherwise repeat without end.
+
 The handoff provides a way to inspect and continue; it does not invent a summary of work that repair never examined. Existing objects, files and external effects remain. A failure while creating or resetting the fallback Context propagates instead of starting another repair inside recovery.
 
-Cancellation bypasses fallback. Recording failures also propagate, because continuing to repair against uncertain history could obscure which actions occurred.
+Cancellation and explicit stops bypass fallback. Recording failures also propagate, because continuing to repair against uncertain history could obscure which actions occurred.
 
 ## Continuity and limits
 

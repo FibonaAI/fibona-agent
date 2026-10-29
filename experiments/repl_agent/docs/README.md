@@ -52,3 +52,7 @@ These relationships define the project across languages. Evaluators, libraries, 
 - [System prompt](agent/system-prompt.md): purpose, working principles and environment awareness.
 
 [Behavioral properties](validation.md) provide scenarios and expected outcomes for checking an implementation against the design.
+
+## Documentation boundaries
+
+This directory describes language- and implementation-independent concepts, responsibilities, behavior and acceptance criteria. Implementations maintain file layout, concrete interfaces, storage encodings, platform limits and implementation-specific checks as needed; see [Python](../python/README.md) and [Node.js](../node/README.md). Implementation notes must not become implicit requirements of the shared design.

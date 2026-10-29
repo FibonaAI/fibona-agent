@@ -24,14 +24,13 @@ The design is the specification from which code and acceptance tests are produce
 | Startup | `python/main.py`, `node/main.js` |
 | Persistent execution and nesting | `python/repl.py`, `node/repl.js` |
 | Complete agent, prompt, model settings and interaction | `python/agent.py`, `node/agent.js` |
-| Behavior tests | `python/tests/test_core.py`, `node/tests/node.test.js` |
 | Architecture and behavioral contracts | `docs/design.md` and its linked pages |
 
 ## Implementing another language
 
 State the target language/version, execution engine, asynchronous execution and cancellation mechanism, model transport, session storage and interaction facilities. Verify that the language can support the REPL contract before building the full agent. Report a capability gap instead of presenting a command runner as an equivalent persistent environment.
 
-Keep each language implementation in its own directory, with `main.*`, `repl.*`, `agent.*`, local dependencies and `tests/`. Keep shared documentation at the experiment root. Implement and verify in this order:
+Keep each language implementation in its own directory, with `main.*`, `repl.*`, `agent.*` and local dependencies. Keep shared documentation at the experiment root. Implement and verify in this order:
 
 | Step | Deliverable and evidence |
 | --- | --- |
@@ -52,12 +51,6 @@ Run commands from the repository root. Choose checks relevant to the change and 
 # Python style checks
 uv run ruff check experiments/repl_agent
 uv run ruff format --check experiments/repl_agent
-
-# Python behavior tests
-uv run python -m unittest discover -s experiments/repl_agent/python/tests -p 'test_*.py'
-
-# Node behavior tests (Node 24+)
-node --test experiments/repl_agent/node/tests/node.test.js
 ```
 
 Check both platforms when changing shared semantics. When changing a REPL or interpreter version, specifically verify persistent definitions, nesting, exception routing and cancellation. Use the actual caller path to verify self-modification, not only assignment or a direct call to a candidate helper.
@@ -68,13 +61,7 @@ Use temporary sessions and deterministic responses or local transport servers fo
 
 ## Current implementation gaps
 
-The following are source-inspection findings to account for when changing related code; existing tests do not establish full design coverage:
-
-- Node lacks the dedicated task-state binding and cell deadlines present in Python. Its recorded cell executor also converts cancellation into an ordinary error result.
-- Both agents still read mutable session globals during batch dispatch and recovery. Pending-call cleanup is not scoped to a response batch, and mode filtering follows chronology rather than operation ownership.
-- Recording failures are not consistently distinguished from recoverable loop failures. Context warning text is added after the budget estimate.
-
-Fix and verify these within the relevant implementation task; remove notes as the gaps are resolved. Concrete APIs and storage details are documented alongside their source.
+Node cell deadlines are cooperative: `sleep` and model requests use the active abort signal; task I/O must use `cell_signal()` explicitly. Blocking code and non-cooperative promises cannot be forcibly stopped in the shared REPL. The executor retains ownership and capture until evaluation actually unwinds; it never races a deadline against code that would continue in the background. See the [Node implementation notes](node/README.md) for the platform boundary.
 
 ## Interpreting and checking the design
 
@@ -97,12 +84,12 @@ Maintain one home for each kind of information:
 | `docs/` | A natural-language model of the project: purpose, concepts, relationships, behavior, rationale and boundaries | The project design changes |
 | Source comments | Readers of a specific implementation: concrete signatures, local mechanisms and platform details | The corresponding implementation changes |
 
-English is the canonical design text; resolve translation conflicts by updating the corresponding Chinese text. Maintain an English document and a complete Chinese counterpart named `*.zh.md` for every Markdown document in this directory. Keep both versions aligned when changing content, preserve code identifiers and executable commands, and link each version to the other. Chinese pages should link to Chinese counterparts where available. `AGENTS.md` remains the maintenance entry point; `AGENTS.zh.md` is its translation, not a separate set of rules.
-
 Organize the design in two levels: `docs/design.md` explains the REPL/agent relationship, their interface and launcher integration; `docs/agent/README.md` owns the agent’s internal state, work/recovery flows and component design. Keep detailed REPL and acceptance contracts as supporting pages. Keep this navigation and cross-references current. Link to the owner of detailed information instead of copying the same rules into the README, these instructions and the prompt. Keep transient test counts, temporary logs and isolated model errors out of long-lived documentation.
 
-Keep `docs/README.md` explicit about the purpose of the documentation and the reading path. Before completing documentation changes, read the affected English and Chinese pages together, check links and section anchors, and trace the described normal and failure paths for missing or conflicting decisions. State which checks were performed; a static document review does not establish that an independent implementation succeeds.
+Keep `docs/README.md` explicit about the purpose of the documentation and the reading path. Before completing documentation changes, read the affected pages together, check links and section anchors, and trace the described normal and failure paths for missing or conflicting decisions. State which checks were performed; a static document review does not establish that an independent implementation succeeds.
 
 For a new language, document consequential language differences in the relevant REPL or agent design section. Add target-specific design only for substantial decisions or explicit compatibility contracts; ordinary choices do not require a separate specification before coding. Record unresolved implementation gaps under “Current implementation gaps.”
 
 Use the direction: design decision → acceptance criteria → implementation → verification. Do not rewrite the specification merely to describe the resulting code. Finish a change with the code, applicable tests and affected documentation aligned. Report what changed, the evidence checked and remaining limitations; do not describe unverified behavior as completed.
+
+Keep shared `docs/` language- and implementation-independent. Maintain concrete mechanisms, platform limits and implementation-specific verification in the relevant implementation README when needed; do not require duplicate documentation for every implementation.

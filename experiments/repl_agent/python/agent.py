@@ -31,6 +31,8 @@ if os.getenv("FIBONA_EXTRA_BODY"):
         raise ValueError("FIBONA_EXTRA_BODY must be a JSON object")
 if not 0 < model_options["max_output_tokens"] < context_window:
     raise ValueError("Require 0 < max output tokens < context window")
+if not os.getenv("OPENAI_API_KEY"):
+    raise RuntimeError("OPENAI_API_KEY is required; set it in .env or the environment")
 # SDK transport retries only; agent_step has a separate, fixed response-attempt limit.
 api_retries = int(os.getenv("FIBONA_API_RETRIES", "2"))
 if api_retries < 0:
@@ -43,116 +45,145 @@ cell_timeout = 300
 # request_model composes the current values; edits affect future requests, not active ones.
 instructions = {
     "identity": """
-You are Fibona, a self-modifying agent that evolves through learning, feedback and verified changes.
-Understand and improve your ways of working to better accomplish the user's goals.
+You are Fibona, an agent capable of understanding and modifying itself.
+Improve how you accomplish the user's goals through action, learning and verified changes.
 """.strip(),
     "working": """
 ## Advance the task
 
-Establish the goal, constraints and evidence of completion. Work independently while useful progress
-is possible. Inspect, act and verify; distinguish assumptions, intentions, attempts and verified outcomes.
-At key steps, compare expected and actual results. When they differ or a required step fails, stop
-dependent work and inspect existing observations and current state before continuing or repeating an
-action. Let the evidence change your understanding and plan.
-Choose investigations and experiments to resolve a specific unknown using available evidence.
-Start with a small check and an appropriate scope and budget; expand when observations justify it.
-Verify the actual deliverables against the user's goal and constraints, not just an intermediate result.
-Use checks that can reveal errors in your assumptions, and preserve useful progress before changing course.
-Ask when missing information or a decision blocks progress; report unfinished work and uncertainty.
-In recovery mode, repair the fault and hand back to work; a handoff alone does not prove repair.
+Understand the user's goal, constraints and completion criteria, and organize work around them.
+Act independently while useful progress is possible; seek clarification when a consequential gap
+in information or decisions blocks progress.
+
+Choose actions that advance the user's goal or resolve uncertainty that blocks progress, and carry
+the task through to completion. Judge progress by evidence, compare expectations with results and
+revise your understanding and approach. When a necessary premise fails, inspect before advancing
+dependent work. Use checks that distinguish explanations and can reveal errors in your own assumptions.
+
+Verify the actual deliverable against the goal; finishing a procedure does not establish success.
+Preserve useful progress, distinguish assumptions, attempts and verified results, and report
+unfinished work and uncertainty honestly.
 """.strip(),
     "environment": """
-## Use and maintain your environment
+## Understand yourself and your environment
 
-You operate in a persistent Python REPL. Your instructions, tools, context policy and work loop,
-along with the variables, functions and resources you create, form a working environment you can
-inspect, maintain and modify.
+You operate in a persistent Python REPL. Your instructions, model access, tools, state management
+and work loop are themselves inspectable and editable code in this environment. The complete agent
+source is available in the first cell and execution history; instructions holds current guidance,
+and request_model provides model access from code.
 
-Starting points:
-- `instructions`: your current instructions; changes affect subsequent requests.
-- `context`: organize context for subsequent model requests.
-- `session`: append-only records of source, model responses and execution history.
-- `task_state`: ordinary editable task state; survives context resets and mode changes, not sent automatically.
-- `run_cell`: execute code; the only capability exposed as a model tool.
-- `request_model`: request a model response from code.
+You share a runtime with task code. Definitions, objects and resources can persist, and local changes
+can affect other components through shared state and dependencies. Understand how the parts cooperate
+and where and when a change takes effect: definitions, retained references and active invocations
+have different lifetimes. Blocking or terminating this process also affects you.
 
-Discover interface details from relevant code and documentation. Source, execution history and
-current bindings may disagree, and failures can leave partial changes. Use them together with actual
-behavior to understand the current environment.
+Use source, history and actual behavior together to understand the current environment. They describe
+implementation, experience and present state; none substitutes for the others. Ground your use,
+maintenance and self-modification in that understanding.
+""".strip(),
+    "run_cell": """
+## Act through code
 
-The agent defined in cell 0 and later task cells share one live namespace, process and work loop.
-Cells are not disposable scripts: bindings, objects and resources can outlive a cell, and terminating
-or blocking this process also affects the agent. A top-level import, assignment or mutation can change
-existing functions through their dependencies even when that cell succeeds. Prefer local scopes for
-ordinary work and distinct names for persistent data. Inspect affected bindings and callers before
-changing shared state, and follow the self-modification checks below.
+run_cell is your sole model-facing tool for executing code. Use it to observe, act and modify the
+environment; inspect its interface and implementation for execution and output details.
+When you have completed the user's task and checked the result, call
+end_turn(message) as the last action in a cell, with your final response
+to the user. Use ordinary replies for progress updates while continuing work.
 
-Make the purpose, dependencies and failure behavior of reusable variables, functions and tools
-discoverable. Manage temporary objects, files, processes and connections too; release or clean them
-up when no longer needed so they do not keep consuming resources. Check dependencies and preserve
-useful work before cleanup; do not blindly clear shared state.
+In recovery mode, call end_turn(message) when the repair is complete
+and normal work can resume.
 
-Actively maintain both working state and model context rather than only appending information.
-Keep `task_state` useful for continuing the task: revise stale information, consolidate completed work,
-and move large evidence to other variables or files with retrieval pointers. Choose its organization
-to suit the task. Like other live variables, its contents do not automatically enter model context;
-decide what to inspect and when, and print only the relevant selections or summaries through run_cell.
-Keep context focused on the next step, retrieving detail as needed. Before changing direction, pausing
-or resetting context, preserve enough goal, progress and evidence pointers to continue. Check current
-state against user instructions and observations after a transition; a repair is not a new task.
+Organize each cell around a clear intent, making dependencies, effects and results easy to understand
+and verify. Connect work through persistent state. Prefer local scopes for temporary work
+and check existing bindings before naming persistent task state.
+Balance simplicity, reuse and the needs of the current task.
 
-Context changes do not reset the REPL or undo external actions; process restarts do not automatically
-restore in-memory objects. Check relevant current state when resuming to avoid repeating actions.
-Explicitly persist state and experience that must last, with pointers for retrieval. Keep session
-records append-only rather than rewriting historical facts.
+Make important results observable, long-running work inspectable and the state after failure
+understandable. Manage time, concurrency and resources according to actual execution capabilities;
+a call ending does not establish that all its effects have ended. Decide what follows from effects
+that already occurred, rather than treating failure, retry or rollback as a return to the starting point.
+Release resources when no longer needed; check dependencies and preserve useful work before cleanup.
 
-Cells share state and support top-level await; trailing expression values are not captured.
-Await nested cells sequentially, never concurrently, and finish concurrent I/O before returning.
-Bound long operations and keep their progress and cleanup inspectable. A cell deadline does not
-supervise child resources or guarantee interruption of arbitrary native code. Inspect the actual
-execution environment and resource lifetimes rather than assuming they match a separate task program.
-Failure, retries and code rollback do not automatically undo existing external effects.
+Distinguish observations for yourself from communication to the user. Captured cell output feeds
+the model; ordinary model replies reach the user. Use the appropriate tool for user-facing content
+produced inside a cell. Select necessary output deliberately; return values are not automatically conveyed.
+""".strip(),
+    "session": """
+## Use historical evidence
 
-Model output and user presentation are separate channels. `print(...)` writes output that is recorded
-and returned to the model; `display(...)` presents to the user without automatically entering model
-context. Write a value to both channels if both audiences need it. Your ordinary reply text is
-shown to the user automatically, including replies alongside tool calls. Use ordinary replies for
-progress and final answers; use `display(...)` for user-facing content produced inside a cell,
-including questions before input(). Captured cell output is feedback for you, not user presentation.
+session records the course of work. Use it to trace actions and results, understand how a problem
+arose and retrieve evidence needed to continue.
+
+Distinguish past observations, current interpretations and present facts. History supports judgment
+but does not replace checking current state, and must not be rewritten to fit a new interpretation.
+
+Retrieve relevant experience according to the question at hand. Preserve relationships between evidence
+so that conclusions and improvements remain traceable to their basis.
+""".strip(),
+    "context": """
+## Maintain working understanding
+
+context selects information for subsequent model requests; task_state holds editable task state.
+Actively organize both so that limited attention serves the current goal.
+
+Keep goals, constraints, progress and important unknowns clear. Revise stale information, consolidate
+understanding and retain retrieval pointers for details not currently needed, rather than accumulating
+content indefinitely. Consider the cost of recovering information when deciding what to retain.
+
+Information stored in the environment is not automatically model input; inspect and select it according
+to the next step. Preserve continuity when reorganizing context, distinguishing currently visible input,
+live runtime state and persisted evidence. Context reset does not reset the environment; process restart
+does not restore live objects. Save and load explicitly for continuity across restarts. Preserve goals,
+constraints and progress through transitions, including recovery, and check current state when resuming.
+""".strip(),
+    "tool": """
+## Build and maintain capabilities
+
+Use tool_catalog to discover existing tools. Read their implementation and documentation to understand
+purpose, conditions and effects before choosing how to use them. The catalog indexes capabilities;
+actual capabilities come from current implementations.
+
+Turn methods worth reusing into tools with clear responsibilities that are easy to understand and verify.
+Document and verify actual use before adding them to the catalog; one-off work need not become a tool.
+
+As tools change, maintain their documentation and catalog entries and check real callers so discoverable
+capabilities match actual behavior. Preserve working definitions and entries for replacement, restore both
+if verification fails, and check callers when removing tools. These are your practices, not a workflow
+enforced by the catalog. Judge reuse by both task outcomes and maintenance cost.
 """.strip(),
     "reflection": """
-## Reflect and iterate
+## Learn and modify yourself
 
-Notice how your ways of working and environment affect results. Treat user corrections, conflicts
-with expectations, repeated mistakes, inefficient patterns and resource problems as signals to
-reflect; also notice effective approaches worth reusing.
+Notice differences between expectations and results, including user corrections, and recognize effective
+methods worth reusing. Investigate causes from evidence, distinguishing incidental outcomes, conditions
+of applicability and lessons that generalize.
 
-Use history, current state and implementation to investigate causes, distinguishing evidence from
-explanation. When evidence is insufficient, use a small check that can distinguish possible causes.
-Based on the cause, decide whether to revise your understanding and approach or change tools, state
-organization, context policy, instructions or the work loop. Use existing capabilities when sufficient;
-otherwise prefer the smallest coherent change. Adding rules is not the default remedy.
-Self-modification must preserve the user's constraints and evidence of success.
+Improvement may concern understanding, approach, tools, state organization, instructions or the work loop.
+Choose changes proportionate to the cause; neither additional rules nor self-modification are goals in
+themselves. Preserve the user's goals, constraints and criteria for success while improving how you work.
 
-Before a change, identify the behavior to improve and the evidence for judging improvement. Inspect
-affected callers, bindings and mutable state; preserve working definitions and necessary state.
-Saved references are not state snapshots. Replacing a definition neither isolates its dependencies
-nor changes active invocations. Keep session storage, model requests and cell execution stable by default.
-Switch, check the actual usage path including affected callers, and roll back on failure within the
-same cell, without another model request or reliance on the changed capability. For effects that
-require later evaluation, retain a rollback path and track what remains unverified.
+Before changing something, identify the intended improvement, how to judge it and the affected dependencies.
+When testing an uncertain improvement, choose an experiment that can test the hypothesis and limit its effects.
+Keep a recovery path independent of the capability being changed, covering necessary state as well as
+old definitions: saved references are not state snapshots. When changing capabilities needed to keep
+running, such as session, context, model access or cell execution, replace and verify through real callers
+within the same cell, rolling back immediately on failure. Verification and rollback must not depend on
+a later model request, another cell or the changed capability. Track effects requiring later evaluation,
+but verify the ability to continue before returning control. Decide whether to retain, revise or revert
+based on benefits, costs and unresolved issues.
 
-Apply verified lessons to subsequent plans or tool checks, preserving their conditions and evidence
-pointers. Check whether they improve results and what costs they add, then retain, revise or revert
-them. Do not turn a single outcome into a permanent rule.
-Keep durable guidance in prompt sections, mechanisms and interfaces in code/docstrings, and task
-progress in working state or history. Prefer discovery pointers over duplicated implementation details;
-check the composed prompt for contradictions after edits and remove guidance that no longer applies.
+Apply lessons to subsequent actions and test them again. Keep stable principles in instructions,
+mechanisms and interfaces in implementation, and task progress in working state. Preserve conditions
+and evidence for lessons, and remove repeated, contradictory or obsolete guidance.
 """.strip(),
 }
 
 
 # Session storage: append-only facts and read-only history views.
+class RecordingError(RuntimeError):
+    """History is unusable; never enter model-driven recovery."""
+
+
 class Session:
     """A linear JSONL log. Views are reconstructed, never saved separately.
 
@@ -168,27 +199,28 @@ class Session:
 
     def __init__(self, path=None):
         import json
+        from pathlib import Path
+        from uuid import uuid4
 
         self.path = Path(path).expanduser() if path else None
         self.records = []
+        self.finished = set()  # (field, start ID) pairs that already have a terminal outcome.
+        self.broken = False
         self.resumed = False
         if self.path and self.path.exists():
             raw = self.path.read_bytes()
             offset = 0
-            for line in raw.splitlines(keepends=True):
+            lines = raw.splitlines(keepends=True)
+            for index, line in enumerate(lines):
                 try:
                     record = json.loads(line)
                 except (ValueError, UnicodeDecodeError):
-                    if not self.records or line.endswith(b"\n"):
-                        raise ValueError("Invalid session log; expected JSONL, not a JSON snapshot") from None
-                    # Only an unfinished final write may be discarded, never an interior record.
+                    if not self.records or index != len(lines) - 1 or line.endswith(b"\n"):
+                        raise ValueError("Invalid session log; expected JSONL") from None
                     with self.path.open("r+b") as file:
                         file.truncate(offset)
                     break
-                if not self.records and (record.get("type") != "session" or record.get("version") != 4):
-                    raise ValueError("Expected a version 4 JSONL session; old snapshots are not modified")
-                if record["id"] != len(self.records):
-                    raise ValueError("Session record IDs must be consecutive")
+                self.finished.update(self._validate(record))
                 self.records.append(record)
                 offset += len(line)
                 if not line.endswith(b"\n"):
@@ -198,26 +230,67 @@ class Session:
         if not self.records:
             self.append("session", version=4, session_id=uuid4().hex)
 
-    def append(self, record_type, **data):
-        """Persist a JSON-serializable fact and return its index in records.
+    def _validate(self, record):
+        """Check a loaded or new record; return terminal keys to add once it is stored."""
+        if not self.records and (
+            not isinstance(record, dict) or record.get("type") != "session" or record.get("version") != 4
+        ):
+            raise ValueError("Expected a version 4 JSONL session; old snapshots are not modified")
+        if not isinstance(record, dict) or type(record.get("id")) is not int or record["id"] != len(self.records):
+            raise ValueError("Session record IDs must be consecutive")
+        kind = record.get("type")
+        if not isinstance(kind, str):
+            raise ValueError("Missing record type")
+        if self.records and kind == "session":
+            raise ValueError("Duplicate session header")
+        finished = set()
+        for field, target, terminals in (
+            ("cell_id", "cell_start", {"cell_end"}),
+            ("request_id", "model_request", {"model_response", "model_request_error"}),
+        ):
+            ref = record.get(field)
+            if ref is None:
+                continue
+            if type(ref) is not int or not 0 <= ref < len(self.records) or self.records[ref]["type"] != target:
+                raise ValueError("Invalid record association")
+            if kind in terminals:
+                if (field, ref) in self.finished:
+                    raise ValueError("Duplicate terminal outcome")
+                finished.add((field, ref))
+        if kind == "cell_end" and record.get("cell_id") is None:
+            raise ValueError("Missing cell start association")
+        if kind == "model_response" and record.get("accepted", True) and record.get("status") == "completed":
+            validate_output(record.get("output"))
+        if kind == "model_response" and record.get("accepted") is True and record.get("status") != "completed":
+            raise ValueError("Incomplete response cannot be accepted")
+        return finished
 
-        The caller owns the fact schema; this method does not validate its meaning.
-        Caller-owned data is copied through JSON, so later edits do not change the fact.
-        """
+    def append(self, record_type, **data):
         import json
         import os
         from datetime import UTC, datetime
 
-        record = {"id": len(self.records), "type": record_type, "time": datetime.now(UTC).isoformat(), **data}
-        encoded = json.dumps(record, ensure_ascii=False) + "\n"
-        if self.path:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            descriptor = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as file:
-                file.write(encoded)
-        # Keep the same value as the file, detached from caller-owned mutable objects.
-        self.records.append(json.loads(encoded))
-        return record["id"]
+        if self.broken:
+            raise RecordingError("Session requires reload after a failed write")
+        record = {**data, "id": len(self.records), "type": record_type, "time": datetime.now(UTC).isoformat()}
+        encoded = json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n"
+        # Lone surrogates (e.g. undecodable file names) become JSON escapes and load back unchanged.
+        data = encoded.encode("utf-8", "backslashreplace")
+        record = json.loads(encoded)
+        finished = self._validate(record)
+        try:
+            if self.path:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                descriptor = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                with os.fdopen(descriptor, "wb") as file:
+                    if file.write(data) != len(data):
+                        raise OSError("Short session write")
+            self.records.append(record)
+            self.finished.update(finished)
+            return record["id"]
+        except Exception as error:
+            self.broken = True
+            raise RecordingError(str(error)) from error
 
     @property
     def messages(self):
@@ -229,7 +302,7 @@ class Session:
                 [r["message"]]
                 if r["type"] == "message"
                 else r["output"]
-                if r["type"] == "model_response" and r["status"] == "completed"
+                if r["type"] == "model_response" and r["status"] == "completed" and r.get("accepted", True)
                 else []
             )
         ]
@@ -267,7 +340,7 @@ class Session:
 cell_tool = {
     "type": "function",
     "name": "run_cell",
-    "description": "Execute a Python cell in the persistent session and receive its output or traceback.",
+    "description": "Execute Python with top-level await in the persistent REPL. Print observations explicitly; trailing expression values are not captured. Await nested cells sequentially, never concurrently. Returns captured output or a traceback.",
     "strict": True,
     "parameters": {
         "type": "object",
@@ -287,7 +360,28 @@ cell_tool = {
 execute = run_cell  # noqa: F821 -- retain the REPL's raw execution capability.
 
 
+cell_owner = None
+
+
+@asynccontextmanager
+async def own_cell():
+    """Keep agent recording/capture sequential before calling the raw executor."""
+    import asyncio
+
+    global cell_owner
+    task = asyncio.current_task()
+    if cell_owner is not None and cell_owner is not task:
+        raise RuntimeError("Concurrent cells are not supported; await run_cell directly")
+    previous = cell_owner
+    cell_owner = task
+    try:
+        yield
+    finally:
+        cell_owner = previous
+
+
 active_cell = ContextVar("active_cell", default=None)
+operation = ContextVar("operation", default=None)
 
 
 def resolve_cell_timeout(value):
@@ -370,6 +464,9 @@ async def cell_execution_timeout(seconds, cell_id, execution):
 async def run_cell(code, *, timeout=None, call_id=None):
     """Execute and record code, returning metadata, output, error and status.
 
+    Supports top-level await; trailing expression values are not captured.
+    Await nested cells sequentially and finish concurrent I/O before returning.
+    A deadline does not supervise child resources or reliably interrupt native code.
     Ordinary execution exceptions become error results; cancellation and storage
     failures propagate. No partial effects are undone. Nested calls inherit a parent,
     not a model call ID; leave call_id unset for direct Python calls.
@@ -380,54 +477,91 @@ async def run_cell(code, *, timeout=None, call_id=None):
     import traceback
     from contextlib import redirect_stderr, redirect_stdout
 
+    if not isinstance(code, str) or not code.strip():
+        raise ValueError("code must be a non-empty string")
     seconds = resolve_cell_timeout(cell_timeout if timeout is None else timeout)
-    # A cell may rebind globals; finish its record in the log/context where it started.
-    log = session
-    active = active_cell
-    parent = active.get()
-    parent_id = parent[1] if parent and parent[0] is log else None
-    cell_id = log.append("cell_start", code=code, parent_cell_id=parent_id, call_id=call_id, timeout=seconds)
-    execution = object()  # Cell IDs are session-local; deadline ownership is invocation-local.
-    token = active.set((log, cell_id))
-    # Model-facing output becomes a tool result; display bypasses this capture.
-    output = io.StringIO()
-    status, error = "completed", None
-    try:
-        with redirect_stdout(output), redirect_stderr(output):
-            async with cell_execution_timeout(seconds, cell_id, execution):
-                await execute(code)
-    except BaseException as exc:
-        status = "error" if isinstance(exc, Exception) else "interrupted"
-        error = traceback.format_exc()
-        if not isinstance(exc, Exception) or (
-            isinstance(exc, CellExecutionTimeoutError) and exc.execution is not execution
-        ):
-            raise
-    finally:
+
+    async with own_cell():
+        # A cell may rebind globals; finish its record in the log/context where it started.
+        scope = operation.get()
+        log = scope["log"] if call_id is not None and scope else session
+        active = active_cell
+        parent = active.get()
+        parent_id = parent[1] if parent and parent[0] is log else None
+        cell_id = log.append(
+            "cell_start",
+            code=code,
+            call_id=call_id,
+            timeout=seconds,
+            **{**record_origin(log), "parent_cell_id": parent_id},
+        )
+        if call_id is not None and scope and scope.get("call_id") == call_id:
+            scope["cell_id"] = cell_id
+        execution = object()  # Cell IDs are session-local; deadline ownership is invocation-local.
+        token = active.set((log, cell_id))
+        # Model-facing output becomes a tool result; display bypasses this capture.
+        output = io.StringIO()
+        status, error = "completed", None
         try:
-            log.append("cell_end", cell_id=cell_id, output=output.getvalue(), error=error, status=status)
+            with redirect_stdout(output), redirect_stderr(output):
+                async with cell_execution_timeout(seconds, cell_id, execution):
+                    await execute(code)
+        except BaseException as exc:
+            status = (
+                "interrupted"
+                if not isinstance(exc, Exception)
+                or (isinstance(exc, CellExecutionTimeoutError) and exc.execution is not execution)
+                else "error"
+            )
+            error = traceback.format_exc()
+            if (
+                isinstance(exc, (RecordingError, ModelStopError))
+                or not isinstance(exc, Exception)
+                or (isinstance(exc, CellExecutionTimeoutError) and exc.execution is not execution)
+            ):
+                raise
         finally:
-            active.reset(token)
-    return {
-        "cell_id": cell_id,
-        "parent_cell_id": parent_id,
-        "call_id": call_id,
-        "code": code,
-        "output": output.getvalue(),
-        "error": error,
-        "status": status,
-    }
+            try:
+                log.append("cell_end", cell_id=cell_id, output=output.getvalue(), error=error, status=status)
+            finally:
+                active.reset(token)
+        return {
+            "cell_id": cell_id,
+            "parent_cell_id": parent_id,
+            "call_id": call_id,
+            "code": code,
+            "output": output.getvalue(),
+            "error": error,
+            "status": status,
+        }
 
 
 def record_origin(log):
     """Identify the current mode interval and enclosing recorded cell."""
+    scope = operation.get()
     mode = next((r for r in reversed(log.records) if r["type"] == "mode"), None)
     active = active_cell.get()
     return {
-        "mode": mode["name"] if mode else "normal",
-        "mode_id": mode["id"] if mode else None,
+        "mode": scope["mode"] if scope and scope["log"] is log else (mode["name"] if mode else "normal"),
+        "mode_id": scope["mode_id"] if scope and scope["log"] is log else (mode["id"] if mode else None),
         "parent_cell_id": active[1] if active and active[0] is log else None,
     }
+
+
+def validate_output(output):
+    """Reject ambiguous completed envelopes before any effects or projection."""
+    if not isinstance(output, list) or any(
+        not isinstance(item, dict) or not isinstance(item.get("type"), str) for item in output
+    ):
+        raise ValueError("Malformed response output")
+    seen = set()
+    for item in output:
+        if item["type"] == "function_call":
+            identity = item.get("call_id")
+            if not isinstance(identity, str) or not identity or identity in seen:
+                raise ValueError("Missing or ambiguous call identity")
+            seen.add(identity)
+    return seen
 
 
 # Model access: explicit requests, followed by session-aware recording.
@@ -464,18 +598,26 @@ async def recorded_request(items, *, attempt):
     # Snapshot defaults before awaiting; later live edits belong to future requests.
     requested_model = model_options["model"]
     reasoning = json.loads(json.dumps(model_options.get("reasoning")))
-    log = session
+    scope = operation.get()
+    log = scope["log"] if scope else session
+    origin = record_origin(log)
     request_id = log.append(
         "model_request",
         model=requested_model,
         reasoning=reasoning,
         max_output_tokens=model_options.get("max_output_tokens"),
+        tool_choice={"type": "function", "name": "run_cell"},
+        parallel_tool_calls=False,
         input_items=len(items),
         attempt=attempt,
-        **record_origin(log),
+        **origin,
     )
     try:
-        response = await request_model(items)
+        response = await request_model(
+            json.loads(json.dumps(items)),
+            tool_choice={"type": "function", "name": "run_cell"},
+            parallel_tool_calls=False,
+        )
         usage = getattr(response, "usage", None)
         output = [item.model_dump(mode="json", exclude_none=True) for item in response.output]
         status = getattr(response, "status", "completed")
@@ -502,20 +644,59 @@ async def recorded_request(items, *, attempt):
             status="error" if isinstance(error, Exception) else "interrupted",
             error=traceback.format_exc(),
         )
+        status_code = getattr(error, "status_code", None)
+        permanent = (
+            isinstance(status_code, int)
+            and 400 <= status_code < 500
+            and status_code not in {408, 409, 429}
+            and getattr(error, "code", None) != "context_length_exceeded"
+        )
+        # Credentials, permissions and missing models are beyond model repair. Other
+        # rejections may come from broken input, so only recovery's own rejection stops.
+        if permanent and (status_code in {401, 403, 404} or origin["mode"] == "recovery"):
+            raise ModelStopError(f"Permanent model HTTP rejection: {status_code}") from error
         raise
-    # Storage failures propagate; they are not model request failures.
-    log.append("model_response", **data)
+    invalid = None
+    try:
+        if status == "completed":
+            ids = validate_output(output)
+            if ids.intersection(pending_calls(log)):
+                raise ValueError("Call identity is already pending")
+        elif status not in {"incomplete", "failed"}:
+            raise ValueError("Malformed response status")
+    except ValueError as error:
+        invalid = error
+    response_id = log.append("model_response", **data, **origin, accepted=status == "completed" and invalid is None)
+    if scope is not None:
+        scope["response_id"] = response_id
+    if invalid:
+        raise invalid
     return response
 
 
 # History projection: shared by normal context and independent recovery.
 def records_in_mode(log, start=0, mode=None):
-    """Select a view of the linear log; mode transitions do not reset context."""
+    """Select records by owning mode; mode transitions do not reset context."""
     current = "normal"
+    owners = {}
     for record in log.records:
-        if record["type"] == "mode":
+        kind = record["type"]
+        if kind == "mode":
             current = record["name"]
-        if record["id"] >= start and (mode is None or current == mode):
+        owner = record.get("mode", current)
+        reference = (
+            record.get("request_id")
+            if kind in {"model_response", "model_request_error"}
+            else record.get("cell_id")
+            if kind == "cell_end"
+            else record.get("response_id")
+            if kind == "tool_error"
+            else None
+        )
+        if reference in owners:
+            owner = owners[reference]
+        owners[record["id"]] = owner
+        if record["id"] >= start and (mode is None or owner == mode):
             yield record
 
 
@@ -525,20 +706,24 @@ def project_messages(log, start=0, *, max_output_chars=None, mode=None):
     Source and unlinked cells stay in history. Incomplete model output is omitted.
     Optional shortening affects this view only, not recorded output or errors.
     """
+    import copy
     import json
 
     messages = []
+    records = log.records
     for record in records_in_mode(log, start, mode):
         kind = record["type"]
         if kind == "message":
             messages.append(record["message"].copy())
-        elif kind == "model_response" and record["status"] == "completed":
+        elif kind == "model_response" and record["status"] == "completed" and record.get("accepted", True):
             messages.extend(item.copy() for item in record["output"])
+        elif kind == "turn_end":
+            messages.append({"role": "assistant", "content": record["message"]})
         elif kind == "mode" and record.get("content"):
             messages.append({"role": "developer", "content": record["content"]})
         elif kind in ("cell_end", "tool_error"):
             # Only model-linked cells produce tool replies; direct/nested cells remain history.
-            call_id = log.records[record["cell_id"]]["call_id"] if kind == "cell_end" else record["call_id"]
+            call_id = records[record["cell_id"]]["call_id"] if kind == "cell_end" else record["call_id"]
             if call_id is None:
                 continue
             fields = ("cell_id", "output", "error", "status") if kind == "cell_end" else ("error",)
@@ -555,23 +740,24 @@ def project_messages(log, start=0, *, max_output_chars=None, mode=None):
             messages.append(
                 {"type": "function_call_output", "call_id": call_id, "output": json.dumps(result, ensure_ascii=False)}
             )
-    return messages
+    return copy.deepcopy(messages)
 
 
 def pending_calls(log, *, mode=None):
     """Unanswered calls in the selected mode, linked to started cells."""
     start = 0
     pending = {}
+    records = log.records
     for record in records_in_mode(log, start, mode):
         kind = record["type"]
-        if kind == "model_response" and record["status"] == "completed":
+        if kind == "model_response" and record["status"] == "completed" and record.get("accepted", True):
             for item in record["output"]:
                 if item.get("type") == "function_call":
                     pending[item["call_id"]] = {"response_id": record["id"], "cell_id": None}
         elif kind == "cell_start" and record["call_id"] in pending:
             pending[record["call_id"]]["cell_id"] = record["id"]
         elif kind == "cell_end":
-            pending.pop(log.records[record["cell_id"]]["call_id"], None)
+            pending.pop(records[record["cell_id"]]["call_id"], None)
         elif kind == "tool_error":
             pending.pop(record["call_id"], None)
     return pending
@@ -664,10 +850,22 @@ class Context:
             ),
             None,
         )
-        if last and last["type"] == "model_response":
+        import math
+
+        measured = (
+            last.get("usage", {}).get("input_tokens")
+            if last and last["type"] == "model_response" and isinstance(last.get("usage"), dict)
+            else None
+        )
+        if (
+            isinstance(measured, (int, float))
+            and not isinstance(measured, bool)
+            and math.isfinite(measured)
+            and measured >= 0
+        ):
             estimate = max(
                 estimate,
-                last["usage"]["input_tokens"]
+                measured
                 + estimate_tokens(
                     project_messages(self.log, last["id"], max_output_chars=self.max_output_chars, mode="normal")
                 ),
@@ -676,75 +874,129 @@ class Context:
 
 
 # Tool completion: close interrupted calls without replaying their effects.
-def repair_pending():
-    """Close interrupted calls as unknown, without replay or duplicate result storage."""
-    # Nested agent steps must not close the cells that are still running above them.
+def repair_pending(log=None, response_id=None):
+    """Repair only the ending batch; startup may repair all historical work."""
+    scope = operation.get()
+    log = log if log is not None else (scope["log"] if scope else session)
+    if response_id is None and scope:
+        response_id = scope.get("response_id")
+        if response_id is None:
+            return
     active = active_cell.get()
     live = set()
-    while active and active[0] is session:
+    records = log.records
+    while active and active[0] is log:
         live.add(active[1])
-        parent = session.records[active[1]]["parent_cell_id"]
-        active = (session, parent) if parent is not None else None
-    for call_id, pending in pending_calls(session).items():
-        cell_id = pending["cell_id"]
-        if cell_id in live:
+        parent = records[active[1]]["parent_cell_id"]
+        active = (log, parent) if parent is not None else None
+    for call_id, pending in pending_calls(log).items():
+        if pending["cell_id"] in live or (response_id is not None and pending["response_id"] != response_id):
             continue
         error = "Execution interrupted; effects unknown. Inspect before retrying."
-        if cell_id is None:
-            session.append("tool_error", call_id=call_id, error=error)
+        if pending["cell_id"] is None:
+            log.append("tool_error", call_id=call_id, response_id=pending["response_id"], error=error)
         else:
-            session.append("cell_end", cell_id=cell_id, status="interrupted", output="", error=error)
+            log.append("cell_end", cell_id=pending["cell_id"], status="interrupted", output="", error=error)
 
 
-# Agent step: retry unsuccessful responses, then dispatch complete tool calls.
+class ModelStopError(RuntimeError):
+    """Stop the current turn without recovery: refusal, unrepairable rejection or repeated failure."""
+
+
+def end_turn(message):
+    """Request completion of this directly dispatched model cell's invocation.
+
+    Call once, as the cell's last action. The nonblank final message is recorded and
+    displayed only after this cell succeeds. Errors/cancellation discard the intent.
+    Recovery and nested model steps end only themselves; the REPL stays alive.
+    """
+    scope = operation.get()
+    active = active_cell.get()
+    if (
+        not scope
+        or not active
+        or active[0] is not scope["log"]
+        or scope.get("call_id") is None
+        or active[1] != scope.get("cell_id")
+    ):
+        raise RuntimeError("end_turn requires a directly dispatched model cell")
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError("end_turn requires a nonblank message")
+    if scope.get("end_message") is not None:
+        raise ValueError("end_turn may be requested only once per cell")
+    scope["end_message"] = message
+
+
 async def agent_step(items):
-    """Request a recorded response, dispatch complete tool calls, and return a loop status.
+    """Require tool actions; complete only after a successful cell calls end_turn.
 
-    Make at most three response attempts, independently of SDK transport retries.
-    Never replay partial output. Return 'continue' after tools or 'completed' after
-    a final reply. Other response outcomes raise for recovery after retries.
+    Three response attempts cover transient failures and no-call continuations.
+    Refusal stops explicitly. Exhausted or non-retryable failures enter recovery;
+    in recovery, a non-retryable failure stops instead of cycling through fallback.
+    Never replay executed effects; end_turn commits only after cell-end recording.
     """
     import asyncio
     import json
 
+    inherited = operation.get()
+    log = inherited["log"] if inherited else session
+    scope = {"log": log, **record_origin(log), "response_id": None}
+    token = operation.set(scope)
     try:
-        log = session
         for attempt in range(3):
             response = await recorded_request(items, attempt=attempt + 1)
             status = getattr(response, "status", "completed")
             if status == "completed":
-                break
-            error = getattr(response, "error", None)
-            code = getattr(error, "code", None)
-            details = getattr(response, "incomplete_details", None)
-            reason = getattr(error, "message", None) or getattr(details, "reason", None)
-            retryable = status == "incomplete" or (
-                status == "failed" and code in {None, "server_error", "rate_limit_exceeded", "timeout", "overloaded"}
-            )
+                refused = False
+                for item in response.output:
+                    if item.type == "message":
+                        for part in item.content:
+                            if part.type in {"output_text", "refusal"}:
+                                text = part.text if part.type == "output_text" else part.refusal
+                                print(text, file=console, flush=True)
+                                refused |= part.type == "refusal"
+                if refused:
+                    log.append("model_stop", response_id=scope["response_id"], reason="refusal")
+                    raise ModelStopError("Model refused the request")
+                calls = [item for item in response.output if item.type == "function_call"]
+                if calls:
+                    break
+                reminder = {
+                    "role": "developer",
+                    "content": "No tool call was returned. Continue through run_cell. To finish this invocation, call end_turn(message) in a successful cell; ordinary text does not end it.",
+                }
+                # Preserve complete provider items for continuation, not incomplete output.
+                items = [*items, *json.loads(json.dumps(log.records[scope["response_id"]]["output"])), reminder]
+                code, reason, retry_reason = None, "No tool call was returned", "no_tool_calls"
+                retryable = True
+            else:
+                error = getattr(response, "error", None)
+                code = getattr(error, "code", None)
+                details = getattr(response, "incomplete_details", None)
+                reason = getattr(error, "message", None) or getattr(details, "reason", None)
+                retry_reason = status
+                retryable = status == "incomplete" or (
+                    status == "failed"
+                    and code in {None, "server_error", "rate_limit_exceeded", "timeout", "overloaded"}
+                )
+            failure = f"Model response {status} ({code or 'unspecified'}): {reason or 'No details'}"
+            if not retryable and scope["mode"] == "recovery":
+                log.append("model_stop", response_id=scope["response_id"], reason="permanent_failure")
+                raise ModelStopError(failure)
             if not retryable or attempt == 2:
-                raise RuntimeError(f"Model response {status} ({code or 'unspecified'}): {reason or 'No details'}")
-            # Retry only the request. Partial output is recorded but never executed or replayed.
+                raise RuntimeError(failure)
             delay = 2**attempt if status == "failed" else 0
             log.append(
                 "model_retry",
                 response_id=getattr(response, "id", None),
                 attempt=attempt + 2,
-                reason=status,
+                reason=retry_reason,
                 error_code=code,
                 delay_seconds=delay,
             )
             if delay:
                 await asyncio.sleep(delay)
-        for item in response.output:
-            if item.type == "message":
-                for part in item.content:
-                    if part.type in {"output_text", "refusal"}:
-                        text = part.text if part.type == "output_text" else part.refusal
-                        print(text, file=console, flush=True)
-        calls = [item for item in response.output if item.type == "function_call"]
-        if not calls:
-            return "completed"
-        for call in calls:
+        for index, call in enumerate(calls):
             try:
                 if call.name != "run_cell":
                     raise ValueError(f"Unknown tool: {call.name}")
@@ -759,33 +1011,60 @@ async def agent_step(items):
                 timeout = arguments.get("timeout")
                 timeout = resolve_cell_timeout(cell_timeout if timeout is None else timeout)
             except (ValueError, KeyError, TypeError) as error:
-                session.append("tool_error", call_id=call.call_id, error=str(error))
+                log.append("tool_error", call_id=call.call_id, response_id=scope["response_id"], error=str(error))
                 continue
-            await run_cell(code, timeout=timeout, call_id=call.call_id)
+            scope.update(call_id=call.call_id, cell_id=None, end_message=None)
+            result = await run_cell(code, timeout=timeout, call_id=call.call_id)
+            message = scope["end_message"]
+            scope.update(call_id=None, cell_id=None, end_message=None)
+            if result["status"] == "completed" and message is not None:
+                for skipped in calls[index + 1 :]:
+                    log.append(
+                        "tool_error",
+                        call_id=skipped.call_id,
+                        response_id=scope["response_id"],
+                        error="Not executed: end_turn completed this invocation.",
+                    )
+                log.append(
+                    "turn_end",
+                    cell_id=result["cell_id"],
+                    response_id=scope["response_id"],
+                    message=message,
+                    **record_origin(log),
+                )
+                print(message, file=console, flush=True)
+                return "completed"
         return "continue"
     finally:
-        # Balance accepted model calls even if dispatch stops midway; never retry their effects.
-        repair_pending()
+        try:
+            if not log.broken and scope["response_id"] is not None:
+                repair_pending(log, scope["response_id"])
+        finally:
+            operation.reset(token)
 
 
 # Normal work: context selection and budget checks around the shared agent step.
 async def agent_loop():
     """Let the agent manage context; overflow falls back to recovery."""
+    global context
     while True:
+        if getattr(context, "log", session) is not session:
+            context = Context(session)
         items = context.build()
         tokens = context.estimate(items)
         budget = context_window - model_options["max_output_tokens"]
-        if tokens > budget:
+        if budget <= 0 or tokens > budget:
             raise RuntimeError(
                 "Context exceeds the input budget. Start fresh context with context.reset(handoff=...) before continuing work."
             )
         if tokens >= budget * 0.8:
-            items.append(
-                {
-                    "role": "developer",
-                    "content": "Context is near its input budget. Write a concise handoff and call context.reset(handoff=...) when appropriate; no automatic summary is generated.",
-                }
-            )
+            warning = {
+                "role": "developer",
+                "content": "Context is near its input budget. Write a concise handoff and call context.reset(handoff=...) when appropriate; no automatic summary is generated.",
+            }
+            if tokens + estimate_tokens([warning]) > budget:
+                raise RuntimeError("Context including guidance exceeds the input budget")
+            items.append(warning)
         if await agent_step(items) != "continue":
             return
 
@@ -794,13 +1073,15 @@ async def agent_loop():
 async def recover(reason):
     """Repair independently, resetting normal context if recovery fails.
 
-    Return when normal work may resume, not as proof of repair. Cancellation and
-    fallback failures propagate. Still depends on execution, model access and storage.
+    Return "completed" or "failed" (after the fresh-context fallback) when normal work
+    may resume, not as proof of repair. Cancellation and fallback failures propagate.
+    Still depends on execution, model access and storage.
     """
     import traceback
 
     global context
-    start = len(session.records)
+    log = session
+    start = len(log.records)
     note = (
         f"Recovery mode. Full failure: session.records[{start}]['reason']. "
         f"Reason (may be truncated): {reason[-1000:]}\n"
@@ -810,25 +1091,28 @@ async def recover(reason):
         "keep the core capabilities unchanged. Do not replay completed effects or execute the original task here. "
         "Do not invoke the work loop during repair. The main context is paused, not reset. "
         "Change it or leave continuation information only as needed for the repair. "
-        "Verify what you can, then finish your response when ready to resume. "
+        "Verify what you can, then call end_turn(message) in a successful cell when ready to resume. "
         "The agent will try the repaired work loop next."
     )
-    session.append("mode", name="recovery", reason=reason, content=note)
+    log.append("mode", name="recovery", reason=reason, content=note)
+    token = operation.set({"log": log, "mode": "recovery", "mode_id": start})
     status = "failed"
     try:
         recovery_error = None
         try:
             while True:
                 # Bypass the editable Context policy; keep the repair instruction last.
-                items = project_messages(session, start + 1)
+                items = project_messages(log, start + 1, mode="recovery")
                 status = "failed"
                 status = await agent_step([*items, {"role": "developer", "content": note}])
                 if status != "continue":
                     break
+        except (RecordingError, CellExecutionTimeoutError, ModelStopError):
+            raise
         except Exception:
             recovery_error = traceback.format_exc()
         if status != "completed":
-            failure = session.append(
+            failure = log.append(
                 "recovery_error",
                 recovery=start,
                 reason=reason,
@@ -839,14 +1123,181 @@ async def recover(reason):
             context.reset(
                 handoff=(
                     f"Recovery failed; use this fresh context to repair and continue the original task. "
-                    f"Failure details: session.records[{failure}]. Prior task and progress: session.records[:{start}]. "
+                    f"Failure details: origin session {log.records[0]['session_id']} (path {log.path}), record {failure}. "
+                    f"Prior task and progress precede record {start} in that session. "
                     "The REPL and external effects are unchanged. Inspect history and live state before acting; "
                     "do not repeat completed effects. Repair what is needed, then continue the user's task."
                 ),
-                cause_id=failure,
+                cause_id=failure if session is log else None,
             )
     finally:
-        session.append("mode", name="normal", recovery=start, status=status)
+        try:
+            if not log.broken:
+                log.append("mode", name="normal", recovery=start, status=status)
+        finally:
+            operation.reset(token)
+    if getattr(context, "log", session) is not session:
+        context = Context(session)
+    return status
+
+
+# Local tools: ordinary callables for cell code, separate from execution/recording policy.
+# Built-in helpers live here; the catalog can also describe functions defined in cells or loaded files.
+# Capture the console before any run_cell redirects output.
+console = sys.stdout
+
+
+async def run_process(command, *, timeout=None, cwd=None, env=None):
+    """Run a POSIX argument vector with bounded process group cleanup and retained output.
+
+    The running command's budget defaults to cell_timeout. An enclosing cell deadline
+    still cancels it, cleaning up the group. TimeoutExpired/CalledProcessError retain stdout and
+    stderr; normal output is returned for explicit inspection. Cancellation stops
+    the owned group before propagating. Each terminate/kill wait allows one second.
+    Spawn can still be delayed by the OS; escaped groups and uninterruptible kernel
+    work cannot be supervised here. Use this for bounded jobs, not background services.
+    """
+    import asyncio
+    import os
+    import signal
+    import subprocess
+    import sys
+    from tempfile import TemporaryFile
+
+    seconds = resolve_cell_timeout(cell_timeout if timeout is None else timeout)
+    if (
+        not isinstance(command, (list, tuple))
+        or not command
+        or any(not isinstance(arg, (str, os.PathLike)) for arg in command)
+    ):
+        raise ValueError("Process command must be a nonempty argument list; invoke a shell explicitly if needed")
+    if os.name != "posix":
+        raise NotImplementedError("Managed process groups require POSIX")
+
+    failure = None
+
+    async def finish(task):
+        # Cancellation can arrive during spawn or cleanup. Finish ownership transfer
+        # and bounded cleanup before propagating it; do not orphan the child.
+        nonlocal failure
+        while True:
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError as error:
+                if task.cancelled():
+                    raise
+                failure = error
+
+    # Files avoid pipe backpressure and EOF waits on descriptors inherited by children.
+    with TemporaryFile() as stdout_file, TemporaryFile() as stderr_file:
+        start = asyncio.create_task(
+            asyncio.create_subprocess_exec(
+                *command,
+                cwd=cwd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                start_new_session=True,
+            )
+        )
+        process = None
+        deadline = asyncio.timeout(seconds)
+        try:
+            async with deadline:
+                process = await asyncio.shield(start)
+                await process.wait()
+        except BaseException as error:
+            failure = error
+        if process is None:
+            try:
+                process = await finish(start)
+            except BaseException:
+                if failure is not None:
+                    raise failure
+                raise
+
+        async def stop_process_group():
+            def send(signum):
+                try:
+                    os.killpg(process.pid, signum)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    # Darwin can return EPERM while an emptied orphan group is
+                    # disappearing. Confirm absence; genuine permission failures
+                    # must still be reported as unconfirmed cleanup.
+                    if sys.platform != "darwin":
+                        raise
+                    check = subprocess.run(["ps", "-o", "pid=", "-g", str(process.pid)], capture_output=True, timeout=1)
+                    if check.returncode not in (0, 1) or check.stdout.strip():
+                        raise
+
+            try:
+                send(signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(process.wait(), 1)
+                except TimeoutError:
+                    pass
+            finally:
+                # Also remove descendants left behind when the command exits normally.
+                send(signal.SIGKILL)
+            await asyncio.wait_for(process.wait(), 1)
+
+        cleanup_error = None
+        try:
+            await finish(asyncio.create_task(stop_process_group()))
+        except Exception as error:
+            cleanup_error = error
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read().decode("utf-8", errors="replace")
+        stderr = stderr_file.read().decode("utf-8", errors="replace")
+
+    if isinstance(failure, TimeoutError) and deadline.expired():
+        failure = subprocess.TimeoutExpired(command, seconds, output=stdout, stderr=stderr)
+    if failure is None:
+        if cleanup_error is not None:
+            failure = RuntimeError("Managed process cleanup failed; process group termination is unconfirmed")
+        elif process.returncode:
+            failure = subprocess.CalledProcessError(process.returncode, command, output=stdout, stderr=stderr)
+    if failure is not None:
+        if cleanup_error is not None:
+            failure.add_note(f"Process group cleanup failed: {cleanup_error!r}")
+        for name, value in (("stdout", stdout), ("stderr", stderr)):
+            if value:
+                failure.add_note(f"Process {name}:\n{value}")
+        raise failure
+    return {"returncode": process.returncode, "stdout": stdout, "stderr": stderr}
+
+
+def display(*values, sep=" ", end="\n", flush=True):
+    """Render values for the user, separately from captured model observations.
+
+    sep/end/flush follow print; returns None. The rendered text is recorded in the
+    active cell's session (or current session outside a cell) and bypasses capture.
+    Use before native input() for questions; print separately if the model also
+    needs the value. Recording failures propagate before presentation.
+    """
+    import io
+
+    active = active_cell.get()
+    log, cell_id = active if active else (session, None)
+    rendered = io.StringIO()
+    print(*values, sep=sep, end=end, file=rendered)
+    text = rendered.getvalue()
+    log.append("display", cell_id=cell_id, text=text)
+    print(text, end="", file=console, flush=flush)
+
+
+# Plain name-to-purpose index, maintained by the agent under the prompt's tool usage policy.
+# Keep detailed contracts beside each callable; native input uses Python's help(input).
+tool_catalog = {
+    "end_turn": "End this invocation after a successful model cell, recording and displaying its final message.",
+    "run_process": "Run a bounded POSIX command and return output after owned process-group cleanup.",
+    "display": "Present values to the user and record them separately from model observations.",
+    "input": "Read a line synchronously; raises EOFError at end of input. Present questions with display first.",
+}
 
 
 # Conversation entry: user input, mode entry and client lifetime.
@@ -865,12 +1316,29 @@ async def run_agent(user_input=None, *, interactive=False):
             if user_input.strip():
                 session.append("mode", name="normal")
                 session.append("message", message={"role": "user", "content": user_input})
-                while True:
-                    try:
-                        await agent_loop()
-                        break
-                    except Exception:
-                        await recover(traceback.format_exc())
+                try:
+                    failed_repairs = 0
+                    while True:
+                        try:
+                            await agent_loop()
+                            break
+                        except (RecordingError, CellExecutionTimeoutError, ModelStopError):
+                            raise
+                        except Exception as error:
+                            # Fallback work may re-enter recovery, but two repairs in a row that fell
+                            # back end the turn on the next failure instead of cycling.
+                            if failed_repairs >= 2:
+                                session.append(
+                                    "model_stop", reason="repeated_recovery_failure", error=traceback.format_exc()
+                                )
+                                raise ModelStopError("Work failed again after two failed recoveries") from error
+                            failed = await recover(traceback.format_exc()) == "failed"
+                            failed_repairs = failed_repairs + 1 if failed else 0
+                except ModelStopError as error:
+                    # Interactive work keeps the live environment and waits for new input.
+                    if not interactive:
+                        raise
+                    print(f"Stopped: {error}", file=console, flush=True)
             if not interactive:
                 return
             user_input = None
@@ -880,24 +1348,7 @@ async def run_agent(user_input=None, *, interactive=False):
             client = None
 
 
-# Initialize agent state once, after all definitions are available.
-# Capture the console before any run_cell redirects output.
-console = sys.stdout
-
-
-def display(*values, sep=" ", end="\n", flush=True):
-    """Record user-facing text in its owning session, without adding model input."""
-    import io
-
-    active = active_cell.get()
-    log, cell_id = active if active else (session, None)
-    rendered = io.StringIO()
-    print(*values, sep=sep, end=end, file=rendered)
-    text = rendered.getvalue()
-    log.append("display", cell_id=cell_id, text=text)
-    print(text, end="", file=console, flush=flush)
-
-
+# Initialize agent state once, after all definitions and local tools are available.
 session_path = os.getenv("FIBONA_SESSION", str(Path.home() / ".local/state/fibona/sessions" / f"{uuid4().hex}.jsonl"))
 session = Session(session_path)
 task_state = {}  # Agent-maintained notes, not automatic summaries; a new process starts empty.

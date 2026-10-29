@@ -83,7 +83,8 @@ def convert(logs_dir: Path, model_name: str | None = None) -> Trajectory | None:
                 requests[record["id"]] = record
             elif kind == "model_response":
                 request = requests.pop(record.get("request_id"), {})
-                output = record.get("output") or []
+                raw_output = record.get("output")
+                output = [item for item in raw_output if isinstance(item, dict)] if isinstance(raw_output, list) else []
                 step = add(
                     record,
                     "agent",
@@ -97,10 +98,11 @@ def convert(logs_dir: Path, model_name: str | None = None) -> Trajectory | None:
                         "record_id": record["id"],
                         "request_id": record.get("request_id"),
                         "status": record.get("status"),
+                        "accepted": record.get("accepted"),
                         "request": request,
                     },
                 )
-                if step["message"].strip() and record.get("status") != "completed":
+                if step["message"].strip() and (record.get("status") != "completed" or record.get("accepted") is False):
                     step["message"] = "未接受的模型文本(诊断)\n" + step["message"]
                 timing = _timing(request, record)
                 step["extra"]["timing"] = timing
@@ -109,17 +111,19 @@ def convert(logs_dir: Path, model_name: str | None = None) -> Trajectory | None:
                 )
                 if reasoning:
                     step["reasoning_content"] = reasoning
-                usage = record.get("usage") or {}
+                usage = record.get("usage") if isinstance(record.get("usage"), dict) else {}
                 metrics = {
                     "prompt_tokens": usage.get("input_tokens"),
                     "completion_tokens": usage.get("output_tokens"),
-                    "cached_tokens": (usage.get("input_tokens_details") or {}).get("cached_tokens"),
+                    "cached_tokens": (
+                        usage.get("input_tokens_details") if isinstance(usage.get("input_tokens_details"), dict) else {}
+                    ).get("cached_tokens"),
                     "cost_usd": usage.get("cost"),
                 }
                 if any(value is not None for value in metrics.values()):
                     step["metrics"] = {key: value for key, value in metrics.items() if value is not None}
-                if record.get("status") != "completed":
-                    step["extra"]["unaccepted_output"] = json.dumps(output, ensure_ascii=False)
+                if record.get("status") != "completed" or record.get("accepted") is False:
+                    step["extra"]["unaccepted_output"] = json.dumps(raw_output, ensure_ascii=False)
                     step["extra"]["error"] = record.get("error")
                     step["extra"]["incomplete_details"] = record.get("incomplete_details")
                     continue
@@ -166,6 +170,8 @@ def convert(logs_dir: Path, model_name: str | None = None) -> Trajectory | None:
                 )
                 cell_details[record["id"]] = (record, detail)
                 cells[record["id"]] = (target, record.get("call_id"))
+            elif kind == "turn_end":
+                add(record, "agent", record["message"], extra={"record": record, "explicit_turn_end": True})
             elif kind == "display":
                 cell_id = record.get("cell_id")
                 owner = cells.get(cell_id)
@@ -207,7 +213,14 @@ def convert(logs_dir: Path, model_name: str | None = None) -> Trajectory | None:
                     observe(target, _cell_result(record))
                 else:
                     add(record, "system", "Unmatched tool error: " + json.dumps(record, ensure_ascii=False))
-            elif kind in {"model_request_error", "mode", "model_retry", "context_reset", "recovery_error"}:
+            elif kind in {
+                "model_request_error",
+                "mode",
+                "model_retry",
+                "context_reset",
+                "recovery_error",
+                "model_stop",
+            }:
                 if kind == "mode" and record.get("name") == "normal" and not record.get("recovery"):
                     continue
                 labels = {
@@ -216,6 +229,7 @@ def convert(logs_dir: Path, model_name: str | None = None) -> Trajectory | None:
                     "model_retry": "重试模型请求",
                     "context_reset": "重置上下文",
                     "recovery_error": "恢复失败",
+                    "model_stop": "模型停止",
                 }
                 detail = (
                     record.get("error")
