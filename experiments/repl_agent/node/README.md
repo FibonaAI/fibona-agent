@@ -16,6 +16,6 @@ Lexical declarations, reassignable variables and module exports behave different
 
 ## Tools and storage
 
-The initial catalog lists `end_turn`, `display`, `input`, `sleep` and `cell_signal`. Only `run_cell` is exposed to the model API; tool return values reach the model or user only when explicitly logged or displayed.
+The initial catalog lists `end_turn`, `display`, `input`, `sleep` and `cell_signal`. Only `run_cell` is exposed to the model API. Its recorded result automatically supplies output, error, status, elapsed seconds and declared timeout to the model; return values of other callables require explicit logging or display. See [cell execution timing](../docs/agent/execution.md#cell-deadlines) for measurement boundaries and unknown historical durations.
 
 Sessions use single-writer versioned JSONL. The loader validates the header, record identities, associations and complete records, and rejects incompatible formats and interior corruption without overwriting them. Only an unparsable unfinished final fragment after a valid prefix is discarded; a valid final record lacking a newline is preserved. `session.records` holds the stored facts themselves, so treat it as read-only; projected model input is a separate copy.

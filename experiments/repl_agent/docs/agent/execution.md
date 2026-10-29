@@ -61,6 +61,10 @@ Bound recorded cells with an editable finite positive default duration. Allow a 
 
 A deadline belongs to the execution invocation, not merely its session-local cell ID. Nested work does not extend the enclosing budget. If a child's own deadline expires, the child reports an execution error and the parent can inspect it. If the enclosing deadline expires while awaiting a child, that expiry must reach the enclosing boundary rather than being swallowed as the child's ordinary failure. Distinguish this from an unrelated timeout exception raised by user code.
 
+Measure elapsed execution time with a monotonic clock, from entering capture/execution until execution exits and capture/deadline resources are restored, before storing the end. Exclude preceding model requests, waiting for execution ownership and this cell's start/end persistence. Return and record this duration for normal, error and interrupted executions that reach an end. Model-linked tool results include elapsed seconds and the cell's declared timeout in seconds, so later decisions can use observed cost. A parent duration includes time spent in nested work; parent and child durations must not be added as independent costs. The declared timeout may be limited by a shorter enclosing deadline.
+
+Elapsed time is unknown for older records without a measurement and for unfinished work closed during restart repair. Do not infer execution duration from the wall-clock gap to recovery. A still-blocked cell cannot provide an ending measurement.
+
 Expiry of the cell's own budget is an ordinary cell error with diagnostics and any available output; the next model step can inspect partial state. External cancellation is a request to stop, so it propagates without starting recovery or fallback. Always restore deadline resources and capture. Do not leave a timer that can interrupt a later cell or silently replace an unrelated active timer.
 
 Interruption support depends on the runtime. Implementations must state their supported interruption boundaries; execution must not be reported complete or shared capture released before evaluation actually exits.

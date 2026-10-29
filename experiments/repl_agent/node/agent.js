@@ -33,10 +33,16 @@ Understand the user's goal, constraints and completion criteria, and organize wo
 Act independently while useful progress is possible; seek clarification when a consequential gap
 in information or decisions blocks progress.
 
-Choose actions that advance the user's goal or resolve uncertainty that blocks progress, and carry
-the task through to completion. Judge progress by evidence, compare expectations with results and
-revise your understanding and approach. When a necessary premise fails, inspect before advancing
-dependent work. Use checks that distinguish explanations and can reveal errors in your own assumptions.
+Choose actions that advance the user's goal or resolve uncertainty that blocks progress. Carry the task
+through to completion, comparing expectations with results and revising your approach. Keep the original
+acceptance criteria and artifact constraints explicit; proxy measurements diagnose progress without
+replacing them. Use checks that distinguish explanations and challenge assumptions shared by the
+implementation and its tests. When a necessary premise fails, inspect before advancing dependent work.
+
+Use observed execution time, expected scale and repetition to judge cost. Before repeating expensive
+work, identify what changed or what variability the repetition measures. Reuse unchanged deterministic
+results and stable reference measurements when appropriate. If experiments stop producing useful
+evidence, preserve progress and reconsider the hypothesis, method and remaining budget.
 
 Verify the actual deliverable against the goal; finishing a procedure does not establish success.
 Preserve useful progress, distinguish assumptions, attempts and verified results, and report
@@ -49,9 +55,11 @@ source is available in the first cell and execution history; instructions holds 
 and request_model provides model access from code.
 
 You share a runtime with task code. Definitions, objects and resources can persist, and local changes
-can affect other components through shared state and dependencies. Understand how the parts cooperate
-and where and when a change takes effect: definitions, retained references and active invocations
-have different lifetimes. Blocking or terminating this process also affects you.
+can affect other components through shared state and dependencies. Distinguish the agent's runtime
+and dependencies from the task's execution environment before changing installations or relying on
+an import check. Understand how the parts cooperate and where and when a change takes effect:
+definitions, retained references and active invocations have different lifetimes. Blocking or
+terminating this process also affects you.
 
 Use source, history and actual behavior together to understand the current environment. They describe
 implementation, experience and present state; none substitutes for the others. Ground your use,
@@ -68,15 +76,17 @@ In recovery mode, call end_turn(message) when the repair is complete
 and normal work can resume.
 
 Organize each cell around a clear intent, making dependencies, effects and results easy to understand
-and verify. Connect work through persistent state. Prefer local scopes for temporary work
-and check existing bindings before naming persistent task state.
-Balance simplicity, reuse and the needs of the current task.
+and verify. Reuse retained data, indexes and helpers; group related observations when their results
+can be interpreted together. Prefer local scopes for temporary work and check existing bindings
+before naming persistent task state. Balance simplicity, reuse and the needs of the current task.
 
 Make important results observable, long-running work inspectable and the state after failure
-understandable. Manage time, concurrency and resources according to actual execution capabilities;
-a call ending does not establish that all its effects have ended. Decide what follows from effects
-that already occurred, rather than treating failure, retry or rollback as a return to the starting point.
-Release resources when no longer needed; check dependencies and preserve useful work before cleanup.
+understandable. Use a representative small run to estimate expensive work. For work that may block
+the shared runtime, use available supervised execution capabilities; a cell deadline alone does not
+guarantee interruption. After timeout, inspect effects and revise the scale, method or execution
+boundary before repeating work. A call ending does not establish that all its effects have ended;
+failure, retry and rollback do not return to the starting point. Release resources when no longer
+needed; check dependencies and preserve useful work before cleanup.
 
 Distinguish observations for yourself from communication to the user. Captured cell output feeds
 the model; ordinary model replies reach the user. Use the appropriate tool for user-facing content
@@ -232,9 +242,9 @@ var Session = class Session {
     for (const r of this.records) {
       if (r.type === "cell_start") {
         cells.set(r.id, { cell_id: r.id, parent_cell_id: r.parent_cell_id, call_id: r.call_id,
-          code: r.code, output: "", error: null, status: "running" });
+          code: r.code, output: "", error: null, status: "running", timeout_seconds: r.timeout ?? null, elapsed_seconds: null });
       } else if (r.type === "cell_end") {
-        Object.assign(cells.get(r.cell_id), { output: r.output, error: r.error, status: r.status });
+        Object.assign(cells.get(r.cell_id), { output: r.output, error: r.error, status: r.status, elapsed_seconds: r.elapsed_seconds ?? null });
       }
     }
     return [...cells.values()];
@@ -272,6 +282,8 @@ var resolve_cell_timeout = value => {
  * for direct/nested calls. timeout is positive seconds, defaulting to cell_timeout when null.
  * Cancellation is cooperative: blocking code and non-cooperative promises cannot be forcibly
  * interrupted. Ownership and capture remain active until evaluation exits. No effects are undone.
+ * elapsed_seconds measures execution through capture/deadline cleanup, excluding session writes;
+ * timeout_seconds is the selected budget, even when a parent deadline is sooner.
  * Ordinary errors become results; external/parent cancellation and storage failures propagate.
  */
 var run_cell = async function run_cell(code, { call_id = null, timeout = null, signal = null } = {}) {
@@ -291,19 +303,21 @@ var run_cell = async function run_cell(code, { call_id = null, timeout = null, s
       const parent_cell_id = parent?.log === log ? parent.cell_id : null;
       const cell_id = log.append("cell_start", { code, call_id, timeout: seconds, ...record_origin(log), parent_cell_id });
       if (call_id !== null && scope?.call_id === call_id) scope.cell_id = cell_id;
+      const now = performance.now.bind(performance);
+      const started = now();
       const controller = new AbortController();
       const signals = [controller.signal, parent?.signal, signal].filter(Boolean);
-      const expires = performance.now() + seconds * 1000;
+      const expires = started + seconds * 1000;
       const frame = { log, cell_id, output: "", signal: AbortSignal.any(signals), deadline: Math.min(expires, parent?.deadline ?? Infinity) };
       frame.deadline_owner = parent && parent.deadline <= expires ? parent.deadline_owner : frame;
       let timer;
       const expire = () => {
-        const remaining = expires - performance.now();
+        const remaining = expires - now();
         if (remaining <= 0) controller.abort(new CellTimeoutError(frame));
         else timer = setTimeout(expire, Math.min(remaining, 2147483647));
       };
       expire();
-      let status = "completed", error = null;
+      let status = "completed", error = null, elapsed_seconds;
       const stdout = process.stdout, stderr = process.stderr;
       const outWrite = stdout.write, errWrite = stderr.write;
       const capture = function (chunk, encoding, callback) {
@@ -316,7 +330,7 @@ var run_cell = async function run_cell(code, { call_id = null, timeout = null, s
       try {
         await active.run(frame, () => execute(code));
         frame.signal.throwIfAborted();
-        if (performance.now() >= frame.deadline) throw new CellTimeoutError(frame.deadline_owner);
+        if (now() >= frame.deadline) throw new CellTimeoutError(frame.deadline_owner);
       } catch (exc) {
         const failure = frame.signal.aborted ? frame.signal.reason : exc;
         // Only this cell's signal marks cancellation; a task-local AbortError is an ordinary error.
@@ -327,9 +341,10 @@ var run_cell = async function run_cell(code, { call_id = null, timeout = null, s
         clearTimeout(timer);
         stdout.write = outWrite;
         stderr.write = errWrite;
-        log.append("cell_end", { cell_id, output: frame.output, error, status });
+        elapsed_seconds = (now() - started) / 1000;
+        log.append("cell_end", { cell_id, output: frame.output, error, status, elapsed_seconds });
       }
-      return { cell_id, parent_cell_id, call_id, code, output: frame.output, error, status };
+      return { cell_id, parent_cell_id, call_id, code, output: frame.output, error, status, elapsed_seconds, timeout_seconds: seconds };
     });
   } finally {
     execution.active = previous;
@@ -461,6 +476,10 @@ var project_messages = function project_messages(log, start = 0, { max_output_ch
       if (call_id === null) continue;
       const fields = record.type === "cell_end" ? ["cell_id", "output", "error", "status"] : ["error"];
       const result = Object.fromEntries(fields.map(key => [key, record[key]]));
+      if (record.type === "cell_end") {
+        result.elapsed_seconds = record.elapsed_seconds ?? null;
+        result.timeout_seconds = records[record.cell_id].timeout ?? null;
+      }
       for (const key of ["output", "error"]) {
         const value = result[key];
         if (max_output_chars && typeof value === "string" && value.length > max_output_chars) {

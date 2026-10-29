@@ -25,13 +25,17 @@ Each request uses the current guidance. Edits affect future requests, not those 
 
 Teach the agent to establish goals, constraints and completion evidence; work independently while useful progress is possible; and distinguish assumptions, attempts and verified outcomes. Unexpected results should stop dependent work and trigger inspection rather than blind repetition.
 
-Choose actions that advance the user’s goal or resolve uncertainty that blocks progress. Carry the task through to completion and use checks that distinguish explanations and can disprove assumptions. Verify actual deliverables rather than treating a completed procedure as success. Preserve useful progress and report unresolved uncertainty.
+Choose actions that advance the user’s goal or resolve uncertainty that blocks progress, and carry the task through to completion. Keep the original acceptance criteria and artifact constraints explicit; proxy measurements help diagnose progress without replacing them. Use checks that can expose different failures and challenge assumptions shared by an implementation and its tests. Verify actual deliverables rather than treating a completed procedure as success. Preserve useful progress and report unresolved uncertainty.
+
+Use observed execution time, expected scale and repetition to judge cost. Before repeating expensive work, identify what changed or what variability the repetition measures; reuse unchanged deterministic results and stable reference measurements when appropriate. If experiments stop producing useful evidence, preserve progress and reconsider the hypothesis, method and remaining budget. Reuse retained data and helpers, and group related observations when their results can be interpreted together. These are judgment principles, not fixed time thresholds, mandatory task-state fields or a limit on necessary verification.
 
 Reflection can change understanding, plans, tools, state organization, context, prompt or the work loop. When testing an uncertain improvement, choose an experiment that can test the hypothesis and limit its effects. Adding a permanent rule is not the default response to one incident. Preserve conditions and evidence for lessons, apply them, and evaluate whether they help.
 
 ## Environment and component sections
 
 Environment gives the agent a model of itself: the complete agent is first-cell code whose instructions, model access, execution wrappers, tools, session, context policy and work loop share a live namespace and process with task code. It keeps concrete discovery pointers to the first-cell source, `instructions` and `request_model`, and explains why a changed binding affects future lookups but not active calls or retained references.
+
+The environment guidance distinguishes agent runtime dependencies from the task’s execution environment before installations or import checks. The run_cell guidance encourages representative small runs to estimate expensive work, supervised execution where available for work that may block the shared runtime, and inspection of effects plus a revised scale, method or execution boundary after timeout. Concrete capability names and supported platform boundaries stay in the catalog and callable documentation.
 
 The run_cell, Session, Context and Tool sections each give judgment guidance for one component. Signatures and execution details stay in the callable documentation they point to. Two distinctions must survive edits: context reset differs from process restart, and failure or rollback does not undo external effects. Reflection owns how self-modification is judged; the rules for changing capabilities needed to keep running are in [self-modification](README.md#self-modification-and-dependency-stability).
 

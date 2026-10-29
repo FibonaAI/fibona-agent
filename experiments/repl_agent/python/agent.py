@@ -55,10 +55,16 @@ Understand the user's goal, constraints and completion criteria, and organize wo
 Act independently while useful progress is possible; seek clarification when a consequential gap
 in information or decisions blocks progress.
 
-Choose actions that advance the user's goal or resolve uncertainty that blocks progress, and carry
-the task through to completion. Judge progress by evidence, compare expectations with results and
-revise your understanding and approach. When a necessary premise fails, inspect before advancing
-dependent work. Use checks that distinguish explanations and can reveal errors in your own assumptions.
+Choose actions that advance the user's goal or resolve uncertainty that blocks progress. Carry the task
+through to completion, comparing expectations with results and revising your approach. Keep the original
+acceptance criteria and artifact constraints explicit; proxy measurements diagnose progress without
+replacing them. Use checks that distinguish explanations and challenge assumptions shared by the
+implementation and its tests. When a necessary premise fails, inspect before advancing dependent work.
+
+Use observed execution time, expected scale and repetition to judge cost. Before repeating expensive
+work, identify what changed or what variability the repetition measures. Reuse unchanged deterministic
+results and stable reference measurements when appropriate. If experiments stop producing useful
+evidence, preserve progress and reconsider the hypothesis, method and remaining budget.
 
 Verify the actual deliverable against the goal; finishing a procedure does not establish success.
 Preserve useful progress, distinguish assumptions, attempts and verified results, and report
@@ -73,9 +79,11 @@ source is available in the first cell and execution history; instructions holds 
 and request_model provides model access from code.
 
 You share a runtime with task code. Definitions, objects and resources can persist, and local changes
-can affect other components through shared state and dependencies. Understand how the parts cooperate
-and where and when a change takes effect: definitions, retained references and active invocations
-have different lifetimes. Blocking or terminating this process also affects you.
+can affect other components through shared state and dependencies. Distinguish the agent's runtime
+and dependencies from the task's execution environment before changing installations or relying on
+an import check. Understand how the parts cooperate and where and when a change takes effect:
+definitions, retained references and active invocations have different lifetimes. Blocking or
+terminating this process also affects you.
 
 Use source, history and actual behavior together to understand the current environment. They describe
 implementation, experience and present state; none substitutes for the others. Ground your use,
@@ -94,15 +102,17 @@ In recovery mode, call end_turn(message) when the repair is complete
 and normal work can resume.
 
 Organize each cell around a clear intent, making dependencies, effects and results easy to understand
-and verify. Connect work through persistent state. Prefer local scopes for temporary work
-and check existing bindings before naming persistent task state.
-Balance simplicity, reuse and the needs of the current task.
+and verify. Reuse retained data, indexes and helpers; group related observations when their results
+can be interpreted together. Prefer local scopes for temporary work and check existing bindings
+before naming persistent task state. Balance simplicity, reuse and the needs of the current task.
 
 Make important results observable, long-running work inspectable and the state after failure
-understandable. Manage time, concurrency and resources according to actual execution capabilities;
-a call ending does not establish that all its effects have ended. Decide what follows from effects
-that already occurred, rather than treating failure, retry or rollback as a return to the starting point.
-Release resources when no longer needed; check dependencies and preserve useful work before cleanup.
+understandable. Use a representative small run to estimate expensive work. For work that may block
+the shared runtime, use available supervised execution capabilities; a cell deadline alone does not
+guarantee interruption. After timeout, inspect effects and revise the scale, method or execution
+boundary before repeating work. A call ending does not establish that all its effects have ended;
+failure, retry and rollback do not return to the starting point. Release resources when no longer
+needed; check dependencies and preserve useful work before cleanup.
 
 Distinguish observations for yourself from communication to the user. Captured cell output feeds
 the model; ordinary model replies reach the user. Use the appropriate tool for user-facing content
@@ -321,9 +331,14 @@ class Session:
                     "output": "",
                     "error": None,
                     "status": "running",
+                    "timeout_seconds": record.get("timeout"),
+                    "elapsed_seconds": None,
                 }
             elif record["type"] == "cell_end":
-                cells[record["cell_id"]].update({key: record[key] for key in ("output", "error", "status")})
+                cells[record["cell_id"]].update(
+                    **{key: record[key] for key in ("output", "error", "status")},
+                    elapsed_seconds=record.get("elapsed_seconds"),
+                )
         return list(cells.values())
 
     @property
@@ -462,8 +477,11 @@ async def cell_execution_timeout(seconds, cell_id, execution):
 
 
 async def run_cell(code, *, timeout=None, call_id=None):
-    """Execute and record code, returning metadata, output, error and status.
+    """Execute and record code, returning metadata, output, error, status and timing.
 
+    elapsed_seconds measures capture/execution and cleanup with a monotonic clock,
+    excluding model requests, ownership waits and session writes. Parent time includes
+    nested work. timeout_seconds is the declared budget, not a shorter parent deadline.
     Supports top-level await; trailing expression values are not captured.
     Await nested cells sequentially and finish concurrent I/O before returning.
     A deadline does not supervise child resources or reliably interrupt native code.
@@ -476,6 +494,7 @@ async def run_cell(code, *, timeout=None, call_id=None):
     import io
     import traceback
     from contextlib import redirect_stderr, redirect_stdout
+    from time import monotonic
 
     if not isinstance(code, str) or not code.strip():
         raise ValueError("code must be a non-empty string")
@@ -502,6 +521,7 @@ async def run_cell(code, *, timeout=None, call_id=None):
         # Model-facing output becomes a tool result; display bypasses this capture.
         output = io.StringIO()
         status, error = "completed", None
+        started = monotonic()
         try:
             with redirect_stdout(output), redirect_stderr(output):
                 async with cell_execution_timeout(seconds, cell_id, execution):
@@ -522,7 +542,15 @@ async def run_cell(code, *, timeout=None, call_id=None):
                 raise
         finally:
             try:
-                log.append("cell_end", cell_id=cell_id, output=output.getvalue(), error=error, status=status)
+                elapsed_seconds = monotonic() - started
+                log.append(
+                    "cell_end",
+                    cell_id=cell_id,
+                    output=output.getvalue(),
+                    error=error,
+                    status=status,
+                    elapsed_seconds=elapsed_seconds,
+                )
             finally:
                 active.reset(token)
         return {
@@ -533,6 +561,8 @@ async def run_cell(code, *, timeout=None, call_id=None):
             "output": output.getvalue(),
             "error": error,
             "status": status,
+            "timeout_seconds": seconds,
+            "elapsed_seconds": elapsed_seconds,
         }
 
 
@@ -728,6 +758,9 @@ def project_messages(log, start=0, *, max_output_chars=None, mode=None):
                 continue
             fields = ("cell_id", "output", "error", "status") if kind == "cell_end" else ("error",)
             result = {key: record[key] for key in fields}
+            if kind == "cell_end":
+                result["timeout_seconds"] = records[record["cell_id"]].get("timeout")
+                result["elapsed_seconds"] = record.get("elapsed_seconds")
             for key in ("output", "error"):
                 value = result.get(key)
                 if max_output_chars and isinstance(value, str) and len(value) > max_output_chars:

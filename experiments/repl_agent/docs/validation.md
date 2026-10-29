@@ -15,6 +15,8 @@ The [design](README.md) has observable consequences when work succeeds, fails or
 | Change a global session binding during a cell/batch | Started operations and accepted calls remain associated with the originating log |
 | Reject an invalid budget; expire a short cell budget | Invalid input has no effects; expiry reports an error with available evidence; later cells remain usable |
 | Expire child versus parent deadline during nesting | Child expiry can be observed; parent expiry reaches its owner; no stale timer affects later work |
+| Complete, fail or interrupt a timed cell, including nested execution | Return values, cell facts/views and the next model request preserve the same monotonic elapsed seconds and declared budget; parent time includes the child; cancellation still propagates |
+| Load historical cells without timing or repair unfinished execution after restart | Unknown elapsed time/budget stays unknown in views and model input; wall-clock gaps to recovery never become measured execution time |
 | Cancel a cell, request or recovery | Stop signal propagates, resources unwind, no recovery/fallback starts for cancellation |
 | Fail start/end recording | No execution without a start; no claimed recording success or replay after an end failure |
 

@@ -20,7 +20,7 @@ The history connects the following kinds of facts:
 | Request error | Associated request and failure/interruption diagnostics |
 | Retry decision | Reason and associated attempt/response; does not prove the next request happened |
 | Cell start | Source, parent if any, model-call association if any and selected execution budget |
-| Cell end | Associated start, captured output, error and completed/error/interrupted outcome |
+| Cell end | Associated start, captured output, error, completed/error/interrupted outcome and measured elapsed execution time when known |
 | Dispatch error | Accepted call that could not start; no fabricated cell execution |
 | User presentation | Rendered display text and originating cell; retained separately from model observations |
 | Mode transition | Normal/recovery entry or exit, recovery identity and useful diagnostics |
@@ -50,7 +50,7 @@ Other formats can use their own recovery mechanism while preserving append-only 
 Projection turns selected history records into the messages and tool results used as model input. It reads the recorded facts without changing them:
 
 - Explicit messages and complete accepted model output contribute input items, including opaque provider items needed for continuation.
-- Model-linked cell ends synthesize tool results. Dispatch errors synthesize error results. Do not also persist these results as duplicate message facts.
+- Model-linked cell ends synthesize tool results, including measured elapsed seconds and the declared timeout from their start. Missing historical measurements or budgets are unknown, not zero; restart repair does not create a duration. Cell views preserve the same timing information. Dispatch errors synthesize error results without fabricated execution time. Do not also persist these results as duplicate message facts.
 - Unlinked direct/nested cells, source and request diagnostics remain inspectable history without extra tool replies.
 - Incomplete/failed response output remains diagnostic history and does not introduce accepted calls.
 - Recovery instructions and continuation notices can be added by the owning flow; they are not automatic copies of all diagnostics.
