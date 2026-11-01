@@ -52,6 +52,7 @@ your memory.
 all items).
 - `input`: a string, or a list of messages and items.
 - `previous_response_id` and `conversation` are not supported; each request carries its own context.
+- `background` is not supported; omit this parameter.
 - Optional: `tools` for your own tools (`tool_choice` is always `"auto"`), `text` for structured output (e.g. `{"format":
   {"type": "json_object"}}`), `reasoning={"effort": "high"}` to set the reasoning effort to `high`
   (values below `lowest_reasoning_effort` are raised to it).
@@ -177,7 +178,7 @@ class Mind:
             reasoning: `effort` defaults to reasoning_effort and is raised to at least
                 lowest_reasoning_effort; other fields pass through.
             stream: always off; the full Response is returned.
-            background: removed for providers that do not accept the parameter.
+            background: unsupported; omit this parameter.
             store: always False. Internal tool rounds replay all input, output and tool-result items.
             parallel_tool_calls: always off, so `set_next_cell` never shares a turn
                 with the caller's tools and the caller never has to answer it.
@@ -193,7 +194,8 @@ class Mind:
             print(r.output_text)
         """
         body = _merge_extra_body({**body, "input": input})
-        body.pop("background", None)
+        if "background" in body:
+            raise ValueError("call_me does not support background; omit this parameter.")
         for field in ("previous_response_id", "conversation"):
             if body.pop(field, None) is not None:
                 raise ValueError(f"call_me does not support {field}; include previous input and output items in input.")
