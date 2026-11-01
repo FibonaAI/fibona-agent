@@ -47,17 +47,20 @@ Requires Python 3.12+ and `uv`.
 1. Create a `.env` file in the project root:
 
    ```dotenv
-   FIBONA_API_KEY=your-openrouter-api-key
-   FIBONA_BASE_URL=https://openrouter.ai/api/v1
-   FIBONA_MODEL=openai/gpt-6-astra
+   FIBONA_API_KEY=your-api-key
+   FIBONA_BASE_URL=https://api.openai.com/v1
+   FIBONA_MODEL=gpt-6-astra
    ```
 
-   Set `FIBONA_MODEL` to your OpenRouter model ID (including the provider prefix); it defaults to `openai/gpt-6-astra`.
-   `call_me` uses the [stateless Responses API](https://openrouter.ai/docs/api_reference/responses/overview):
+   Set `FIBONA_MODEL` to your model ID; it defaults to `gpt-6-astra`.
+   Set `FIBONA_BASE_URL` to use an OpenAI-compatible gateway.
+   `call_me` uses the [OpenAI Responses API](https://developers.openai.com/api/reference/resources/responses) in stateless mode:
    it sends the full context each round with `store=False`. To continue across calls, include the earlier
    input and returned `r.output` in the next `input`; `previous_response_id` is not supported.
-   The full official request, response and streaming reference is available offline in the REPL as
-   `openrouter_responses_api_docs["methods/create"]`.
+   To receive encrypted reasoning for replay, pass `include=["reasoning.encrypted_content"]`.
+   The complete official Responses API reference is available offline in the REPL as
+   `openai_responses_api_docs` (page name → Markdown), including `methods/create`, `streaming-events`,
+   and `websocket-events`. The reference also documents stateful features that `call_me` does not support.
 
 2. Choose a startup mode and run it from the project root:
 
@@ -122,9 +125,9 @@ call_me(input=task)
 
 with OpenAI(
     api_key=os.environ["FIBONA_API_KEY"],
-    base_url=os.getenv("FIBONA_BASE_URL", "https://openrouter.ai/api/v1"),
+    base_url=os.getenv("FIBONA_BASE_URL", "https://api.openai.com/v1"),
 ) as client:
-    mind = Mind(client=client, model=os.getenv("FIBONA_MODEL", "openai/gpt-6-astra"), instructions=INSTRUCTIONS)
+    mind = Mind(client=client, model=os.getenv("FIBONA_MODEL", "gpt-6-astra"), instructions=INSTRUCTIONS)
     env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
     Agent(mind, cwd=".").run(bootstrap_cell, env=env)
 ```

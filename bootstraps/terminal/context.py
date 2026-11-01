@@ -43,7 +43,7 @@ def initialize_context(namespace):
         var_docs={  # Variable name -> description, maintained by the agent in this session.
             **namespace.get("var_docs", {}),
             "startup_task": "Original task; preserve when the current goal changes.",
-            "openrouter_responses_api_docs": "Complete official OpenRouter Responses API reference (page -> Markdown). Search/read excerpts on demand.",
+            "openai_responses_api_docs": "Complete official OpenAI Responses API reference (page -> Markdown). Search/read excerpts on demand.",
             "task_state": "Current goal, constraints, verified completed work and pending work; update before call_me().",
         },
         variables=partial(variables, namespace),
