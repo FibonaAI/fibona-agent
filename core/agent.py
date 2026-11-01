@@ -51,8 +51,7 @@ your memory.
 `call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for
 all items).
 - `input`: a string, or a list of messages and items.
-- `previous_response_id` and `conversation` are not supported; each request carries its own context.
-- `background` is not supported; omit this parameter.
+- `previous_response_id`, `conversation`, and `background` are unsupported and ignored.
 - Optional: `tools` for your own tools (`tool_choice` is always `"auto"`), `text` for structured output (e.g. `{"format":
   {"type": "json_object"}}`), `reasoning={"effort": "high"}` to set the reasoning effort to `high`
   (values below `lowest_reasoning_effort` are raised to it).
@@ -166,7 +165,7 @@ class Mind:
 
         input: a string or list of input items, passed positionally or by keyword; defaults to empty.
         body: other keyword arguments of `client.responses.create`. Commonly used:
-            previous_response_id, conversation: unsupported; include earlier input and output items instead.
+            previous_response_id, conversation: ignored; include earlier input and output items instead.
             tools: the caller's own tools; `set_next_cell` is always appended.
             text: output format, e.g. {"format": {"type": "json_object"}}.
             max_output_tokens: cap on generated tokens, reasoning included.
@@ -178,7 +177,7 @@ class Mind:
             reasoning: `effort` defaults to reasoning_effort and is raised to at least
                 lowest_reasoning_effort; other fields pass through.
             stream: always off; the full Response is returned.
-            background: unsupported; omit this parameter.
+            background: ignored and not sent to the API.
             store: always False. Internal tool rounds replay all input, output and tool-result items.
             parallel_tool_calls: always off, so `set_next_cell` never shares a turn
                 with the caller's tools and the caller never has to answer it.
@@ -194,11 +193,8 @@ class Mind:
             print(r.output_text)
         """
         body = _merge_extra_body({**body, "input": input})
-        if "background" in body:
-            raise ValueError("call_me does not support background; omit this parameter.")
-        for field in ("previous_response_id", "conversation"):
-            if body.pop(field, None) is not None:
-                raise ValueError(f"call_me does not support {field}; include previous input and output items in input.")
+        for field in ("background", "previous_response_id", "conversation"):
+            body.pop(field, None)
         reasoning = body.get("reasoning") or {}
         effort = reasoning.get("effort")
         if effort not in REASONING_EFFORTS:
