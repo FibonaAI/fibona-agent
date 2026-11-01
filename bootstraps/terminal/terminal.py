@@ -108,10 +108,6 @@ class Terminal:
         self.previous_io = None
         self.cell_slot = None
         self.completed_cell = None  # (number, result, slot) of the last cell IPython finished, until core confirms it.
-        # A replacement UI continues the previous one's pending cell summary.
-        previous = shell.user_ns.get("terminal")
-        current = getattr(previous, "current_cell", None)
-        self.next_summary = current[1] if current else "Initialize the terminal."
         self.current_cell = None
         self.cell_buffer = None
         self.attached = False
@@ -432,7 +428,7 @@ class Terminal:
         )
         history = namespace.get("history", [])
         # A replaced UI's conversation is already in the scrollback; only the notebook record restarts.
-        for number, cell in enumerate(history):
+        for number, cell in enumerate(history[:-1]):
             self.notebook.start_cell(number, cell["summary"], cell["code"])
             self.notebook.finish_cell(cell["error"], output=cell["output"])
         self.shell.events.register("pre_run_cell", self._begin_cell)
@@ -515,19 +511,14 @@ class Terminal:
         return text
 
     def _begin_cell(self, info):
-        """Use IPython's cell source and the existing model submission callback for UI metadata."""
+        """Read current cell metadata and the previous cell's validated result from core history."""
         namespace = self.shell.user_ns
-        number = len(namespace.get("history", []))
+        history = namespace["history"]
+        number = len(history) - 1
         if self.completed_cell is not None and number:
-            _, _, slot = self.completed_cell
-            if slot is not None:
-                self.next_summary = slot.summary
-            previous = namespace["history"][-1]
+            previous = history[-2]
             self._confirm_cell(CellResult(previous["output"], previous["error"]))
-        if number and namespace["history"][-1]["error"]:
-            stopped = _stopped(namespace["history"][-1]["error"])
-            self.next_summary = "Wait for the user after a stop." if stopped else "Repair the failed cell."
-        self.current_cell = (number, self.next_summary, info.raw_cell)
+        self.current_cell = (number, history[-1]["summary"], info.raw_cell)
         self._record_cell(*self.current_cell)
         self.previous_io = (sys.stdout, sys.stderr, namespace["input"])
         # Core's capture buffer, if any: it already holds output printed before this hook ran.
