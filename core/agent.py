@@ -51,7 +51,6 @@ your memory.
 `call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for
 all items).
 - `input`: a string, or a list of messages and items.
-- To continue, include the previous input, `r.output`, and new messages in `input`.
 - `previous_response_id` and `conversation` are not supported; each request carries its own context.
 - Optional: `tools` for your own tools (`tool_choice` is always `"auto"`), `text` for structured output (e.g. `{"format":
   {"type": "json_object"}}`), `reasoning={"effort": "high"}` to set the reasoning effort to `high`
@@ -60,7 +59,7 @@ all items).
 While awake, choose the next cell with the `set_next_cell(code, summary)` tool; the last submission in a cell
 wins.
 
-You wake up knowing only the call's input, so build `input` from state: take the results, errors and
+You wake up knowing only what the call gives you, so build `input` from state: take the results, errors and
 facts you need from variables and `history`, and name the variables that hold the full data so the next cell
 can use them.
 
@@ -80,7 +79,7 @@ can use them.
 - **`history`**: one `{code, summary, output, error, status}` dict per cell, including the current cell at the end.
   `summary` describes the cell's intent. `output` records stdout and stderr as of now.
   `error` records failures. `status` is `running`, `completed`, or `error`. Finished records are copies.
-- Choose what to include in `input`. Include earlier input and response items to continue the previous model context.
+- Choose what to include in `input`. The host does not select or send working context for you.
 
 ## In the session
 
