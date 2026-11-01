@@ -3,6 +3,7 @@
 import argparse
 import os
 import sys
+from functools import partial
 from pathlib import Path
 
 from openai import OpenAI
@@ -31,6 +32,7 @@ def main() -> int:
         default="medium",
         help="Default reasoning effort for call_me, raised to the minimum if needed (default: medium).",
     )
+    parser.add_argument("--fast", action="store_true", help="Use priority service tier for faster model responses.")
     args, remaining_args = parser.parse_known_args()
     bootstrap_file = (
         bootstrap_dir / args.boot_mode / "init.py"
@@ -53,6 +55,8 @@ def main() -> int:
             base_url=os.getenv("FIBONA_BASE_URL", "https://api.openai.com/v1"),
             max_retries=int(os.getenv("FIBONA_API_RETRIES", "2")),
         ) as client:
+            if args.fast:
+                client.responses.create = partial(client.responses.create, service_tier="priority")
             mind = Mind(
                 client,
                 model,
