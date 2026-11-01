@@ -108,6 +108,7 @@ Cells share variables and call `call_me` when they need the model to choose the 
 Configure the client, model, working directory and input/output in your application:
 
 ```python
+import os
 import sys
 
 from openai import OpenAI
@@ -119,8 +120,11 @@ task = input("Your task: ")
 call_me(input=task)
 """
 
-with OpenAI() as client:
-    mind = Mind(client=client, model="gpt-6-astra", instructions=INSTRUCTIONS)
+with OpenAI(
+    api_key=os.environ["FIBONA_API_KEY"],
+    base_url=os.getenv("FIBONA_BASE_URL", "https://openrouter.ai/api/v1"),
+) as client:
+    mind = Mind(client=client, model=os.getenv("FIBONA_MODEL", "openai/gpt-6-astra"), instructions=INSTRUCTIONS)
     env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
     Agent(mind, cwd=".").run(bootstrap_cell, env=env)
 ```
