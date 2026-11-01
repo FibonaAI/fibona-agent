@@ -14,7 +14,7 @@ A job records the code (commit and uncommitted patch) â†’ mirrors task images â†
 ## Prerequisites
 
 - In the environment: `VOLCENGINE_ACCESS_KEY`/`VOLCENGINE_SECRET_KEY`, `TOS_ACCESS_KEY`/`TOS_SECRET_KEY`,
-  `OPENAI_API_KEY` (optionally `FIBONA_BASE_URL`).
+  `FIBONA_API_KEY` (optionally `FIBONA_BASE_URL`).
 - Read access to the SSH key in `settings.pk`; git `user.name` and `user.email` set.
 
 ## Config

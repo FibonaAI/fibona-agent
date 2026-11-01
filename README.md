@@ -47,7 +47,7 @@ Requires Python 3.12+ and `uv`.
 1. Create a `.env` file in the project root:
 
    ```dotenv
-   OPENAI_API_KEY=your-openrouter-api-key
+   FIBONA_API_KEY=your-openrouter-api-key
    FIBONA_BASE_URL=https://openrouter.ai/api/v1
    FIBONA_MODEL=openai/gpt-6-astra
    ```
