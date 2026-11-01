@@ -49,7 +49,7 @@ Requires Python 3.12+ and `uv`.
    ```dotenv
    OPENAI_API_KEY=your-openrouter-api-key
    OPENAI_BASE_URL=https://openrouter.ai/api/v1
-   FIBONA_MODEL=openai/o4-mini
+   FIBONA_MODEL=openai/gpt-6-astra
    ```
 
    Set `FIBONA_MODEL` to your OpenRouter model ID (including the provider prefix).
