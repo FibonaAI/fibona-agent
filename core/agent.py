@@ -80,6 +80,7 @@ can use them.
   `summary` describes the cell's intent. `output` records stdout and stderr as of now.
   `error` records failures. `status` is `running`, `completed`, or `error`. Finished records are copies.
 - Choose what to include in `input`. The host does not select or send working context for you.
+- To preserve reasoning context, pass the previous `reasoning` items back in `input` with their `encrypted_content` unchanged.
 
 ## In the session
 
