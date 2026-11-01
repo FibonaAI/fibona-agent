@@ -70,6 +70,8 @@ Requires Python 3.12+ and `uv`.
      uv run --env-file .env fibona.py --boot-mode terminal
      ```
 
+     Add `--fast` to use priority service tier. Without it, requests use the API default.
+
      See the [terminal bootstrap README](bootstraps/terminal/README.md) for its design and controls.
 
    - Or start in the minimal mode and let the agent build its own chat TUI:

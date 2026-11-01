@@ -31,6 +31,7 @@ def main() -> int:
         default="medium",
         help="Default reasoning effort for call_me, raised to the minimum if needed (default: medium).",
     )
+    parser.add_argument("--fast", action="store_true", help="Use priority service tier for faster model responses.")
     args, remaining_args = parser.parse_known_args()
     bootstrap_file = (
         bootstrap_dir / args.boot_mode / "init.py"
@@ -59,6 +60,7 @@ def main() -> int:
                 INSTRUCTIONS,
                 lowest_reasoning_effort=args.lowest_reasoning_effort,
                 reasoning_effort=args.reasoning_effort,
+                service_tier="priority" if args.fast else None,
             )
             env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
             env.bind(argv=remaining_args)  # Arguments this launcher did not consume, for the bootstrap to read.
