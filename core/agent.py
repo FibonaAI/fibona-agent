@@ -176,7 +176,8 @@ class Mind:
             model, instructions: the mind itself.
             reasoning: `effort` defaults to reasoning_effort and is raised to at least
                 lowest_reasoning_effort; other fields pass through.
-            stream, background: always off; the full Response is returned.
+            stream: always off; the full Response is returned.
+            background: removed for providers that do not accept the parameter.
             store: always False. Internal tool rounds replay all input, output and tool-result items.
             parallel_tool_calls: always off, so `set_next_cell` never shares a turn
                 with the caller's tools and the caller never has to answer it.
@@ -192,6 +193,7 @@ class Mind:
             print(r.output_text)
         """
         body = _merge_extra_body({**body, "input": input})
+        body.pop("background", None)
         for field in ("previous_response_id", "conversation"):
             if body.pop(field, None) is not None:
                 raise ValueError(f"call_me does not support {field}; include previous input and output items in input.")
@@ -211,7 +213,6 @@ class Mind:
             parallel_tool_calls=False,
             store=False,
             stream=False,
-            background=False,
         )
         outputs = []
         usage = None
