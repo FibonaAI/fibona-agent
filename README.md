@@ -52,7 +52,7 @@ Requires Python 3.12+ and `uv`.
    FIBONA_MODEL=openai/gpt-6-astra
    ```
 
-   Set `FIBONA_MODEL` to your OpenRouter model ID (including the provider prefix).
+   Set `FIBONA_MODEL` to your OpenRouter model ID (including the provider prefix); it defaults to `openai/gpt-6-astra`.
    `call_me` uses the [stateless Responses API](https://openrouter.ai/docs/api_reference/responses/overview):
    it sends the full context each round with `store=False`. To continue across calls, include the earlier
    input and returned `r.output` in the next `input`; `previous_response_id` is not supported.
