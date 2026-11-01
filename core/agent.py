@@ -8,11 +8,11 @@ from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
-from openai import APIError, OpenAI
+from openai import APIError, OpenAI, Stream
 from openai.types.responses import Response, ResponseFunctionToolCall, ResponseFunctionToolCallOutputItem
 
 from core.env import CellResult, IPythonEnv, Quit
-from core.utils import log_info, run_logger
+from core.utils import _merge_extra_body, log_info, run_logger
 
 INSTRUCTIONS = """
 You are the Fibona agent.
@@ -45,17 +45,22 @@ your memory.
 
 ## call_me
 
+`call_me` follows the OpenAI Responses API protocol, with host-specific behavior defined in the code.
+
 `call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for
 all items).
 - `input`: a string, or a list of messages and items.
-- Optional: `tools` and `tool_choice` for your own tools, `text` for structured output (e.g. `{"format":
+- `previous_response_id`: pass a previous `call_me` result's `r.id` to continue its stored context.
+  Send only new input when continuing; do not also replay `r.output`.
+- `conversation` is not supported; use `previous_response_id` for continuation.
+- Optional: `tools` for your own tools (`tool_choice` is always `"auto"`), `text` for structured output (e.g. `{"format":
   {"type": "json_object"}}`), `reasoning={"effort": "high"}` to set the reasoning effort to `high`
   (values below `lowest_reasoning_effort` are raised to it).
 
 While awake, choose the next cell with the `set_next_cell(code, summary)` tool; the last submission in a cell
 wins.
 
-You wake up knowing only what the call gives you, so build `input` from state: take the results, errors and
+You wake up knowing the call's input and any context linked by `previous_response_id`, so build `input` from state: take the results, errors and
 facts you need from variables and `history`, and name the variables that hold the full data so the next cell
 can use them.
 
@@ -71,16 +76,18 @@ can use them.
 ## State
 
 - **Variables** persist. Inspect them with `globals()`; values are not automatically sent to you.
+- **`openai_responses_api_docs`**: the full OpenAI Responses API reference (page name -> Markdown); read relevant pages as needed.
 - **`history`**: one `{code, summary, output, error, status}` dict per cell, including the current cell at the end.
   `summary` describes the cell's intent. `output` records stdout and stderr as of now.
   `error` records failures. `status` is `running`, `completed`, or `error`. Finished records are copies.
-- Choose what to include in `input`. The host does not select or send working context for you.
+- Choose what to include in `input`. Use `previous_response_id` to continue the previous model context.
 
 ## In the session
 
-- `call_llm_api(input, **params) -> str`: a plain model call without your predefined instructions or host tool. It is not
-  you, just a way to use intelligence as a function; it cannot choose a cell, so it is safe to call from many
-  threads at once.
+- `call_llm_api(input, **params)`: a plain model call without predefined agent instructions or the host tool.
+  It is not you, just a way to use intelligence as a function; it cannot choose a cell and is safe to call concurrently.
+  Parameters and results follow `client.responses.create`, with a default model.
+  Returns a Response (read `.output_text`), or an event stream with `stream=True`.
 - `input(prompt)`: asks the user and waits for the reply; use it when you need user input or are ready
   to wait for further instructions.
 - `quit()`: ends the run. Call it only when the user asks.
@@ -110,20 +117,6 @@ SET_NEXT_CELL = {
         "required": ["code", "summary"],
         "additionalProperties": False,
     },
-}
-
-# Fields normalized or fixed by wake; extra_body must not override them.
-PROTECTED = {
-    "model",
-    "instructions",
-    "tools",
-    "reasoning",
-    "stream",
-    "background",
-    "input",
-    "parallel_tool_calls",
-    "store",
-    "previous_response_id",
 }
 
 Submit = Callable[[str, str], None]
@@ -172,24 +165,25 @@ class Mind:
 
         input: a string or list of input items, passed positionally or by keyword; defaults to empty.
         body: other keyword arguments of `client.responses.create`. Commonly used:
+            previous_response_id: a previous call_me result's id to continue its stored context.
+                Supply only new input; omit this argument to start an independent chain.
             tools: the caller's own tools; `set_next_cell` is always appended.
-            tool_choice: "auto" / "required" / "none", or a specific tool.
             text: output format, e.g. {"format": {"type": "json_object"}}.
             max_output_tokens: cap on generated tokens, reasoning included.
-            include: extra output data; "reasoning.encrypted_content" is always added.
+            include: extra output data, passed through unchanged.
             metadata, ...: passed through unchanged.
           Normalized or fixed by the mind:
+            tool_choice: always "auto".
             model, instructions: the mind itself.
             reasoning: `effort` defaults to reasoning_effort and is raised to at least
                 lowest_reasoning_effort; other fields pass through.
             stream, background: always off; the full Response is returned.
-            store, previous_response_id: stateless; to continue a conversation, put its
-                earlier items (e.g. `r.output`) into `input`.
+            store: always True. Internal tool rounds use previous_response_id to retain
+                hosted tool context, continuing the caller's chain when supplied.
             parallel_tool_calls: always off, so `set_next_cell` never shares a turn
                 with the caller's tools and the caller never has to answer it.
         submit: where `set_next_cell(code, summary)` lands. The agent binds a fresh one
             per cell, so a late call from a finished cell cannot choose the next one.
-        extra_body cannot override fields in PROTECTED.
 
         Example (agent side, before each cell runs):
             slot = Slot()
@@ -199,25 +193,26 @@ class Mind:
             r = call_me(input="Tests failed:\\n" + log + "\\nFix them and submit the next cell.")
             print(r.output_text)
         """
+        body = _merge_extra_body({**body, "input": input})
+        if body.get("conversation") is not None:
+            raise ValueError("call_me does not support conversation; use previous_response_id instead.")
         reasoning = body.get("reasoning") or {}
         effort = reasoning.get("effort")
         if effort not in REASONING_EFFORTS:
             effort = self.reasoning_effort
         effort = max(effort, self.lowest_reasoning_effort, key=REASONING_EFFORTS.index)
-        items = _input_items(input)
+        items = _input_items(body.pop("input"))
         tools = [t for t in body.get("tools", []) if t.get("name") != SET_NEXT_CELL["name"]]
-        body = {k: v for k, v in body.items() if k not in PROTECTED}
-        if body.get("extra_body") is not None:
-            body["extra_body"] = {k: v for k, v in body["extra_body"].items() if k not in PROTECTED}
         body.update(
             model=self.model,
             instructions=self.instructions,
             reasoning={**reasoning, "effort": effort},
             tools=[*tools, SET_NEXT_CELL],
+            tool_choice="auto",
             parallel_tool_calls=False,
-            store=False,
-            # Without server-side storage, reasoning can only be replayed in its encrypted form.
-            include=list({*body.get("include", []), "reasoning.encrypted_content"}),
+            store=True,
+            stream=False,
+            background=False,
         )
         outputs = []
         usage = None
@@ -257,37 +252,35 @@ class Mind:
                 output=_run_host_tool(next_cell_call, submit),
             )
             outputs.append(output)
-            # Replay every output item, including encrypted reasoning, without server-side storage.
-            items = [
-                *items,
-                *(item.model_dump(mode="json", exclude_none=True) for item in response.output),
-                output.model_dump(mode="json", exclude_none=True),
-            ]
+            # Retain hosted tool context on the server; send only the new tool result.
+            body["previous_response_id"] = response.id
+            items = [output.model_dump(mode="json", exclude_none=True)]
 
-    def query(self, input, *, logger=None, **params) -> str:
+    def query(self, input, *, logger=None, **params) -> Response | Stream:
         """A plain model call used as a function (summarize, extract, classify, ...).
 
         No predefined agent instructions or host tool are added, so it cannot schedule a cell and is
-        safe to call concurrently. Exposed to cells as `call_llm_api`; returns the reply text.
+        safe to call concurrently. Exposed to cells as `call_llm_api`; returns the Response or event stream unchanged.
+        Only a default model and logging are added; parameters and failed responses pass through unchanged.
 
         Example (cell side):
             with ThreadPoolExecutor(8) as pool:
-                summaries = list(pool.map(lambda src: call_llm_api("Summarize in one line:\\n" + src), sources))
+                summaries = list(pool.map(lambda src: call_llm_api("Summarize in one line:\\n" + src).output_text, sources))
         """
-        params = {k: v for k, v in params.items() if k not in {"stream", "background", "previous_response_id"}}
-        params.setdefault("model", self.model)
-        request = {**params, "store": False, "input": _input_items(input)}
+        request = {**params, "input": input}
+        request.setdefault("model", self.model)
         metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_llm_api"}
         log_info(logger, "model_request", **metadata, request=request)
         try:
             response = self.client.responses.create(**request)
-            if response.status == "failed":  # e.g. OpenRouter's provider errors after generation began.
-                raise APIError(f"Response {response.id} failed: {response.error}", request=None, body=None)
         except BaseException as exc:
             log_info(logger, "model_error", **metadata, error={"type": type(exc).__name__, "message": str(exc)})
             raise
-        log_info(logger, "model_response", **metadata, response=response)
-        return response.output_text
+        if isinstance(response, Response):
+            log_info(logger, "model_response", **metadata, response=response)
+        else:
+            log_info(logger, "model_stream_created", **metadata)
+        return response
 
 
 def _add_usage(total, current):
@@ -421,6 +414,11 @@ Repair the failure and continue the program.
         """
         with chdir(self.cwd or Path.cwd()), run_logger() as logger:
             env = env if env is not None else IPythonEnv()
+            env.bind(
+                openai_responses_api_docs=json.loads(
+                    Path(__file__).with_name("openai_responses_api_docs.json").read_text(encoding="utf-8")
+                )
+            )
             memory = Memory()
 
             def quit_() -> None:

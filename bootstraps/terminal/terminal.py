@@ -623,6 +623,9 @@ class Terminal:
 
     def _create_response(self, **params):
         """Show streamed progress while preserving the model's complete response and host tool calls."""
+        options = {**params, **(params.get("extra_body") or {})}
+        if options.get("stream") or options.get("background"):
+            return self.create_response(**params)
         try:
             self._model_event("start")
             with self.create_response(**{**params, "stream": True}) as stream:
