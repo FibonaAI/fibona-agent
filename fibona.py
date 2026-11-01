@@ -46,7 +46,7 @@ def main() -> int:
     model = os.getenv("FIBONA_MODEL", "openai/gpt-6-astra")
     try:
         with OpenAI(
-            base_url=os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
+            base_url=os.getenv("FIBONA_BASE_URL", "https://openrouter.ai/api/v1"),
             max_retries=int(os.getenv("FIBONA_API_RETRIES", "2")),
         ) as client:
             mind = Mind(

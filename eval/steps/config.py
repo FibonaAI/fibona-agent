@@ -33,13 +33,13 @@ class ModelSettings(BaseModel):
 
     def environment(self, model: str, base_url: str | None = None) -> dict[str, str]:
         """Explicit YAML values override optional environment defaults; credentials remain private."""
-        keys = ("OPENAI_API_KEY", "OPENAI_BASE_URL", *(f"FIBONA_{key.upper()}" for key in type(self).model_fields))
+        keys = ("OPENAI_API_KEY", "FIBONA_BASE_URL", *(f"FIBONA_{key.upper()}" for key in type(self).model_fields))
         env = {key: os.environ[key] for key in keys if os.environ.get(key)}
         env.setdefault("FIBONA_API_RETRIES", "8")
         for key, value in self.model_dump(exclude_none=True).items():
             env[f"FIBONA_{key.upper()}"] = json.dumps(value) if isinstance(value, dict) else str(value)
         if base_url is not None:
-            env["OPENAI_BASE_URL"] = base_url
+            env["FIBONA_BASE_URL"] = base_url
         env["FIBONA_MODEL"] = model
         return env
 
