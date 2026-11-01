@@ -159,8 +159,9 @@ class Mind:
         """Wake the mind. Exposed to cells as `call_me`.
 
         The returned output contains every round's items and host tool results, in order.
-        Usage sums known values across rounds; its custom `incomplete` flag is True if any round
-        omits usage, in which case the totals may undercount. Otherwise the flag is False.
+        Usage treats the wake as one logical request: keep the first reported input usage,
+        sum output usage, and recompute total_tokens. Its custom `incomplete` flag is True
+        if any round omits usage; these partial counts are not a complete wake total.
         It is None only if no round reports usage.
         Other Response fields (id, status, etc.) describe the final API response.
 
@@ -282,19 +283,18 @@ class Mind:
 
 
 def _add_usage(total, current):
-    """Accumulate usage without changing the original responses; unknown details stay unknown."""
+    """Keep initial input usage and accumulate generated output for one logical wake."""
     if current is None:
         return total
     if total is None:
         return current.model_copy(deep=True)
-    for field in ("input_tokens", "output_tokens", "total_tokens"):
-        setattr(total, field, getattr(total, field) + getattr(current, field))
-    for field in ("input_tokens_details", "output_tokens_details"):
-        details, incoming = getattr(total, field), getattr(current, field)
-        for key in type(details).model_fields:
-            a, b = getattr(details, key, None), getattr(incoming, key, None)
-            setattr(details, key, a + b if a is not None and b is not None else None)
-    if hasattr(total, "cost"):  # Optional provider-reported cost.
+    total.output_tokens += current.output_tokens
+    total.total_tokens = total.input_tokens + total.output_tokens
+    details, incoming = total.output_tokens_details, current.output_tokens_details
+    for key in type(details).model_fields:
+        a, b = getattr(details, key, None), getattr(incoming, key, None)
+        setattr(details, key, a + b if a is not None and b is not None else None)
+    if hasattr(total, "cost"):  # Actual provider cost still includes every round.
         a, b = total.cost, getattr(current, "cost", None)
         total.cost = a + b if a is not None and b is not None else None
     return total
