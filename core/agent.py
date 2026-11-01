@@ -76,7 +76,7 @@ can use them.
 ## State
 
 - **Variables** persist. Inspect them with `globals()`; values are not automatically sent to you.
-- **`openai_responses_api_docs`**: the full OpenAI Responses API reference (page name -> Markdown); read relevant pages as needed.
+- **`openrouter_responses_api_docs`**: the full OpenRouter Responses API reference (page name -> Markdown); read relevant pages as needed.
 - **`history`**: one `{code, summary, output, error, status}` dict per cell, including the current cell at the end.
   `summary` describes the cell's intent. `output` records stdout and stderr as of now.
   `error` records failures. `status` is `running`, `completed`, or `error`. Finished records are copies.
@@ -413,8 +413,8 @@ Repair the failure and continue the program.
         with chdir(self.cwd or Path.cwd()), run_logger() as logger:
             env = env if env is not None else IPythonEnv()
             env.bind(
-                openai_responses_api_docs=json.loads(
-                    files("agent_assets").joinpath("openai_responses_api_docs.json").read_text(encoding="utf-8")
+                openrouter_responses_api_docs=json.loads(
+                    files("agent_assets").joinpath("openrouter_responses_api_docs.json").read_text(encoding="utf-8")
                 )
             )
             memory = Memory()

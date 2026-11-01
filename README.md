@@ -56,6 +56,8 @@ Requires Python 3.12+ and `uv`.
    `call_me` uses the [stateless Responses API](https://openrouter.ai/docs/api_reference/responses/overview):
    it sends the full context each round with `store=False`. To continue across calls, include the earlier
    input and returned `r.output` in the next `input`; `previous_response_id` is not supported.
+   The full official request, response and streaming reference is available offline in the REPL as
+   `openrouter_responses_api_docs["methods/create"]`.
 
 2. Choose a startup mode and run it from the project root:
 
