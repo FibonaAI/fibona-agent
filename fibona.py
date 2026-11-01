@@ -37,7 +37,6 @@ def main() -> int:
         "--fast", dest="service_tier", action="store_const", const="priority", help="Use priority service tier."
     )
     speed.add_argument(
-        "--ultrafst",
         "--ultrafast",
         dest="service_tier",
         action="store_const",
