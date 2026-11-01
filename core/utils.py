@@ -7,6 +7,33 @@ from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
+# Fields the host reads or controls, resolved before applying its rules.
+MANAGED_FIELDS = {
+    "model",
+    "instructions",
+    "tools",
+    "tool_choice",
+    "reasoning",
+    "stream",
+    "background",
+    "input",
+    "parallel_tool_calls",
+    "store",
+    "previous_response_id",
+    "conversation",
+}
+
+
+def _merge_extra_body(params: dict) -> dict:
+    """Resolve managed fields before host logic; leave other overrides to the SDK."""
+    params = dict(params)
+    extra = dict(params.pop("extra_body", None) or {})
+    for key in extra.keys() & MANAGED_FIELDS:
+        params[key] = extra.pop(key)
+    if extra:
+        params["extra_body"] = extra
+    return params
+
 
 class JsonFormatter(logging.Formatter):
     """Keep the log's flat JSONL event format."""

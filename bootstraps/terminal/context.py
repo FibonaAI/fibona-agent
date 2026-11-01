@@ -43,6 +43,7 @@ def initialize_context(namespace):
         var_docs={  # Variable name -> description, maintained by the agent in this session.
             **namespace.get("var_docs", {}),
             "startup_task": "Original task; preserve when the current goal changes.",
+            "openai_responses_api_docs": "Complete official Responses API reference (page -> Markdown). Search/read excerpts on demand.",
             "task_state": "Current goal, constraints, verified completed work and pending work; update before call_me().",
         },
         variables=partial(variables, namespace),
@@ -91,7 +92,7 @@ def build_context(namespace):
         Recent task cells:
         ### cell 12 · Summarize each page in one line
         code:
-        summaries = [call_llm_api("One line:\\n" + html) for html in pages.values()]
+        summaries = [call_llm_api("One line:\\n" + html).output_text for html in pages.values()]
         output:
         Summarized 30 pages.
 
