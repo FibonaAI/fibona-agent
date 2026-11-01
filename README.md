@@ -47,14 +47,17 @@ Requires Python 3.12+ and `uv`.
 1. Create a `.env` file in the project root:
 
    ```dotenv
-   OPENAI_API_KEY=your-api-key
-   FIBONA_MODEL=gpt-6-astra
-
-   # Optional: use a custom API endpoint.
-   # OPENAI_BASE_URL=https://your-provider.example/v1
+   FIBONA_API_KEY=your-openrouter-api-key
+   FIBONA_BASE_URL=https://openrouter.ai/api/v1
+   FIBONA_MODEL=openai/gpt-6-astra
    ```
 
-   Set `FIBONA_MODEL` to a model supported by your provider. If omitted, it defaults to `gpt-6-astra`.
+   Set `FIBONA_MODEL` to your OpenRouter model ID (including the provider prefix); it defaults to `openai/gpt-6-astra`.
+   `call_me` uses the [stateless Responses API](https://openrouter.ai/docs/api_reference/responses/overview):
+   it sends the full context each round with `store=False`. To continue across calls, include the earlier
+   input and returned `r.output` in the next `input`; `previous_response_id` is not supported.
+   The full official request, response and streaming reference is available offline in the REPL as
+   `openrouter_responses_api_docs["methods/create"]`.
 
 2. Choose a startup mode and run it from the project root:
 

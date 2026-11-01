@@ -43,7 +43,7 @@ def initialize_context(namespace):
         var_docs={  # Variable name -> description, maintained by the agent in this session.
             **namespace.get("var_docs", {}),
             "startup_task": "Original task; preserve when the current goal changes.",
-            "openai_responses_api_docs": "Complete official Responses API reference (page -> Markdown). Search/read excerpts on demand.",
+            "openrouter_responses_api_docs": "Complete official OpenRouter Responses API reference (page -> Markdown). Search/read excerpts on demand.",
             "task_state": "Current goal, constraints, verified completed work and pending work; update before call_me().",
         },
         variables=partial(variables, namespace),
@@ -118,7 +118,7 @@ def build_context(namespace):
         f"Completed: {task_state['completed']!r}",
         f"Pending: {task_state['pending']!r}",
         f"Working directory: {Path.cwd()}",
-        f"Current task cell: {len(history)}",
+        f"Current task cell: {len(history) - 1}",
         "Variables: " + (", ".join(described[:200]) or "none"),
     ]
     # Older records stay accessible by index; summarize their intent and outcome here.

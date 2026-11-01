@@ -46,14 +46,12 @@ your memory.
 
 ## call_me
 
-`call_me` follows the OpenAI Responses API protocol, with host-specific behavior defined in the code.
+`call_me` uses OpenRouter's stateless Responses API, with host-specific behavior defined in the code.
 
 `call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for
 all items).
 - `input`: a string, or a list of messages and items.
-- `previous_response_id`: pass a previous `call_me` result's `r.id` to continue its stored context.
-  Send only new input when continuing; do not also replay `r.output`.
-- `conversation` is not supported; use `previous_response_id` for continuation.
+- `previous_response_id` and `conversation` are not supported; each request carries its own context.
 - Optional: `tools` for your own tools (`tool_choice` is always `"auto"`), `text` for structured output (e.g. `{"format":
   {"type": "json_object"}}`), `reasoning={"effort": "high"}` to set the reasoning effort to `high`
   (values below `lowest_reasoning_effort` are raised to it).
@@ -61,7 +59,7 @@ all items).
 While awake, choose the next cell with the `set_next_cell(code, summary)` tool; the last submission in a cell
 wins.
 
-You wake up knowing the call's input and any context linked by `previous_response_id`, so build `input` from state: take the results, errors and
+You wake up knowing only what the call gives you, so build `input` from state: take the results, errors and
 facts you need from variables and `history`, and name the variables that hold the full data so the next cell
 can use them.
 
@@ -77,11 +75,12 @@ can use them.
 ## State
 
 - **Variables** persist. Inspect them with `globals()`; values are not automatically sent to you.
-- **`openai_responses_api_docs`**: the full OpenAI Responses API reference (page name -> Markdown); read relevant pages as needed.
+- **`openrouter_responses_api_docs`**: the full OpenRouter Responses API reference (page name -> Markdown); read relevant pages as needed.
 - **`history`**: one `{code, summary, output, error, status}` dict per cell, including the current cell at the end.
   `summary` describes the cell's intent. `output` records stdout and stderr as of now.
   `error` records failures. `status` is `running`, `completed`, or `error`. Finished records are copies.
-- Choose what to include in `input`. Use `previous_response_id` to continue the previous model context.
+- Choose what to include in `input`. The host does not select or send working context for you.
+- To preserve reasoning context, pass the `reasoning` items from the previous `response.output` into the next `input`.
 
 ## In the session
 
@@ -166,8 +165,7 @@ class Mind:
 
         input: a string or list of input items, passed positionally or by keyword; defaults to empty.
         body: other keyword arguments of `client.responses.create`. Commonly used:
-            previous_response_id: a previous call_me result's id to continue its stored context.
-                Supply only new input; omit this argument to start an independent chain.
+            previous_response_id, conversation: unsupported; include earlier input and output items instead.
             tools: the caller's own tools; `set_next_cell` is always appended.
             text: output format, e.g. {"format": {"type": "json_object"}}.
             max_output_tokens: cap on generated tokens, reasoning included.
@@ -179,8 +177,7 @@ class Mind:
             reasoning: `effort` defaults to reasoning_effort and is raised to at least
                 lowest_reasoning_effort; other fields pass through.
             stream, background: always off; the full Response is returned.
-            store: always True. Internal tool rounds use previous_response_id to retain
-                hosted tool context, continuing the caller's chain when supplied.
+            store: always False. Internal tool rounds replay all input, output and tool-result items.
             parallel_tool_calls: always off, so `set_next_cell` never shares a turn
                 with the caller's tools and the caller never has to answer it.
         submit: where `set_next_cell(code, summary)` lands. The agent binds a fresh one
@@ -195,8 +192,9 @@ class Mind:
             print(r.output_text)
         """
         body = _merge_extra_body({**body, "input": input})
-        if body.get("conversation") is not None:
-            raise ValueError("call_me does not support conversation; use previous_response_id instead.")
+        for field in ("previous_response_id", "conversation"):
+            if body.pop(field, None) is not None:
+                raise ValueError(f"call_me does not support {field}; include previous input and output items in input.")
         reasoning = body.get("reasoning") or {}
         effort = reasoning.get("effort")
         if effort not in REASONING_EFFORTS:
@@ -211,7 +209,7 @@ class Mind:
             tools=[*tools, SET_NEXT_CELL],
             tool_choice="auto",
             parallel_tool_calls=False,
-            store=True,
+            store=False,
             stream=False,
             background=False,
         )
@@ -253,9 +251,8 @@ class Mind:
                 output=_run_host_tool(next_cell_call, submit),
             )
             outputs.append(output)
-            # Retain hosted tool context on the server; send only the new tool result.
-            body["previous_response_id"] = response.id
-            items = [output]
+            # OpenRouter is stateless; replay each model item and tool result exactly once.
+            items = [*items, *response.output, output]
 
     def query(self, input, *, logger=None, **params) -> Response | Stream:
         """A plain model call used as a function (summarize, extract, classify, ...).
@@ -416,8 +413,8 @@ Repair the failure and continue the program.
         with chdir(self.cwd or Path.cwd()), run_logger() as logger:
             env = env if env is not None else IPythonEnv()
             env.bind(
-                openai_responses_api_docs=json.loads(
-                    files("agent_assets").joinpath("openai_responses_api_docs.json").read_text(encoding="utf-8")
+                openrouter_responses_api_docs=json.loads(
+                    files("agent_assets").joinpath("openrouter_responses_api_docs.json").read_text(encoding="utf-8")
                 )
             )
             memory = Memory()

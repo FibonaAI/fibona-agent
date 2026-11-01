@@ -14,7 +14,7 @@ A job records the code (commit and uncommitted patch) â†’ mirrors task images â†
 ## Prerequisites
 
 - In the environment: `VOLCENGINE_ACCESS_KEY`/`VOLCENGINE_SECRET_KEY`, `TOS_ACCESS_KEY`/`TOS_SECRET_KEY`,
-  `OPENAI_API_KEY` (optionally `OPENAI_BASE_URL`).
+  `FIBONA_API_KEY` (optionally `FIBONA_BASE_URL`).
 - Read access to the SSH key in `settings.pk`; git `user.name` and `user.email` set.
 
 ## Config
@@ -36,7 +36,7 @@ See `example.yaml` for a full example; unknown keys are rejected.
 
 For adapters using the shared environment helper, explicit YAML values override environment defaults.
 `model_settings.xxx` maps to `FIBONA_XXX` (objects use JSON), `model` to `FIBONA_MODEL`, and
-`base_url` to `OPENAI_BASE_URL`; supported settings depend on the adapter.
+`base_url` to `FIBONA_BASE_URL`; supported settings depend on the adapter.
 
 ## Make targets
 
