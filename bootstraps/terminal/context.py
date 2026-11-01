@@ -118,7 +118,7 @@ def build_context(namespace):
         f"Completed: {task_state['completed']!r}",
         f"Pending: {task_state['pending']!r}",
         f"Working directory: {Path.cwd()}",
-        f"Current task cell: {len(history)}",
+        f"Current task cell: {len(history) - 1}",
         "Variables: " + (", ".join(described[:200]) or "none"),
     ]
     # Older records stay accessible by index; summarize their intent and outcome here.
