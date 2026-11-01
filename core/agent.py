@@ -4,6 +4,7 @@ from collections.abc import Callable
 from contextlib import chdir
 from datetime import UTC, datetime
 from functools import partial
+from importlib.resources import files
 from pathlib import Path
 from threading import Lock
 from uuid import uuid4
@@ -416,7 +417,7 @@ Repair the failure and continue the program.
             env = env if env is not None else IPythonEnv()
             env.bind(
                 openai_responses_api_docs=json.loads(
-                    Path(__file__).with_name("openai_responses_api_docs.json").read_text(encoding="utf-8")
+                    files("agent_assets").joinpath("openai_responses_api_docs.json").read_text(encoding="utf-8")
                 )
             )
             memory = Memory()
