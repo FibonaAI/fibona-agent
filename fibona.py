@@ -32,7 +32,17 @@ def main() -> int:
         default="medium",
         help="Default reasoning effort for call_me, raised to the minimum if needed (default: medium).",
     )
-    parser.add_argument("--fast", action="store_true", help="Use priority service tier for faster model responses.")
+    speed = parser.add_mutually_exclusive_group()
+    speed.add_argument(
+        "--fast", dest="service_tier", action="store_const", const="priority", help="Use priority service tier."
+    )
+    speed.add_argument(
+        "--ultrafast",
+        dest="service_tier",
+        action="store_const",
+        const="ultrafast",
+        help="Use ultrafast service tier.",
+    )
     args, remaining_args = parser.parse_known_args()
     bootstrap_file = (
         bootstrap_dir / args.boot_mode / "init.py"
@@ -55,8 +65,8 @@ def main() -> int:
             base_url=os.getenv("FIBONA_BASE_URL", "https://api.openai.com/v1"),
             max_retries=int(os.getenv("FIBONA_API_RETRIES", "2")),
         ) as client:
-            if args.fast:
-                client.responses.create = partial(client.responses.create, service_tier="priority")
+            if args.service_tier:
+                client.responses.create = partial(client.responses.create, service_tier=args.service_tier)
             mind = Mind(
                 client,
                 model,
