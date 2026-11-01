@@ -255,7 +255,7 @@ class Mind:
             outputs.append(output)
             # Retain hosted tool context on the server; send only the new tool result.
             body["previous_response_id"] = response.id
-            items = [output.model_dump(mode="json", exclude_none=True)]
+            items = [output]
 
     def query(self, input, *, logger=None, **params) -> Response | Stream:
         """A plain model call used as a function (summarize, extract, classify, ...).
