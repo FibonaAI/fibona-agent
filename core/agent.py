@@ -46,7 +46,7 @@ your memory.
 
 ## call_me
 
-`call_me` uses OpenRouter's stateless Responses API, with host-specific behavior defined in the code.
+`call_me` uses the OpenAI Responses API in stateless mode, with host-specific behavior defined in the code.
 
 `call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for
 all items).
@@ -75,12 +75,13 @@ can use them.
 ## State
 
 - **Variables** persist. Inspect them with `globals()`; values are not automatically sent to you.
-- **`openrouter_responses_api_docs`**: the full OpenRouter Responses API reference (page name -> Markdown); read relevant pages as needed.
+- **`openai_responses_api_docs`**: the full OpenAI Responses API reference (page name -> Markdown); read relevant pages as needed.
 - **`history`**: one `{code, summary, output, error, status}` dict per cell, including the current cell at the end.
   `summary` describes the cell's intent. `output` records stdout and stderr as of now.
   `error` records failures. `status` is `running`, `completed`, or `error`. Finished records are copies.
 - Choose what to include in `input`. The host does not select or send working context for you.
-- To preserve reasoning context, pass the `reasoning` items from the previous `response.output` into the next `input`.
+- For reasoning replay, request `include=["reasoning.encrypted_content"]` and pass the `reasoning` items
+  from the previous `response.output` into the next `input`.
 
 ## In the session
 
@@ -222,7 +223,7 @@ class Mind:
             request = {**body, "input": items}
             try:
                 response = self.client.responses.create(**request)
-                if response.status == "failed":  # e.g. OpenRouter's provider errors after generation began.
+                if response.status == "failed":  # Provider errors can arrive after generation begins.
                     raise APIError(f"Response {response.id} failed: {response.error}", request=None, body=None)
             except BaseException as exc:
                 log_info(
@@ -251,7 +252,7 @@ class Mind:
                 output=_run_host_tool(next_cell_call, submit),
             )
             outputs.append(output)
-            # OpenRouter is stateless; replay each model item and tool result exactly once.
+            # Stateless requests replay each model item and tool result exactly once.
             items = [*items, *response.output, output]
 
     def query(self, input, *, logger=None, **params) -> Response | Stream:
@@ -294,7 +295,7 @@ def _add_usage(total, current):
         for key in type(details).model_fields:
             a, b = getattr(details, key, None), getattr(incoming, key, None)
             setattr(details, key, a + b if a is not None and b is not None else None)
-    if hasattr(total, "cost"):  # A provider extra, e.g. OpenRouter's cost in USD.
+    if hasattr(total, "cost"):  # Optional provider-reported cost.
         a, b = total.cost, getattr(current, "cost", None)
         total.cost = a + b if a is not None and b is not None else None
     return total
@@ -413,8 +414,8 @@ Repair the failure and continue the program.
         with chdir(self.cwd or Path.cwd()), run_logger() as logger:
             env = env if env is not None else IPythonEnv()
             env.bind(
-                openrouter_responses_api_docs=json.loads(
-                    files("agent_assets").joinpath("openrouter_responses_api_docs.json").read_text(encoding="utf-8")
+                openai_responses_api_docs=json.loads(
+                    files("agent_assets").joinpath("openai_responses_api_docs.json").read_text(encoding="utf-8")
                 )
             )
             memory = Memory()

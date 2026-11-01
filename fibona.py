@@ -43,14 +43,14 @@ def main() -> int:
         parser.error(str(error))
     if not bootstrap_cell.strip():
         parser.error("bootstrap cell must contain Python code")
-    model = os.getenv("FIBONA_MODEL", "openai/gpt-6-astra")
+    model = os.getenv("FIBONA_MODEL", "gpt-6-astra")
     api_key = os.getenv("FIBONA_API_KEY")
     if not api_key:
         parser.error("Set FIBONA_API_KEY to your API key.")
     try:
         with OpenAI(
             api_key=api_key,
-            base_url=os.getenv("FIBONA_BASE_URL", "https://openrouter.ai/api/v1"),
+            base_url=os.getenv("FIBONA_BASE_URL", "https://api.openai.com/v1"),
             max_retries=int(os.getenv("FIBONA_API_RETRIES", "2")),
         ) as client:
             mind = Mind(
