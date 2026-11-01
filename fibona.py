@@ -3,6 +3,7 @@
 import argparse
 import os
 import sys
+from functools import partial
 from pathlib import Path
 
 from openai import OpenAI
@@ -54,13 +55,14 @@ def main() -> int:
             base_url=os.getenv("FIBONA_BASE_URL", "https://api.openai.com/v1"),
             max_retries=int(os.getenv("FIBONA_API_RETRIES", "2")),
         ) as client:
+            if args.fast:
+                client.responses.create = partial(client.responses.create, service_tier="priority")
             mind = Mind(
                 client,
                 model,
                 INSTRUCTIONS,
                 lowest_reasoning_effort=args.lowest_reasoning_effort,
                 reasoning_effort=args.reasoning_effort,
-                service_tier="priority" if args.fast else None,
             )
             env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
             env.bind(argv=remaining_args)  # Arguments this launcher did not consume, for the bootstrap to read.

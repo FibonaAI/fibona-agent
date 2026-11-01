@@ -52,7 +52,6 @@ your memory.
 all items).
 - `input`: a string, or a list of messages and items.
 - `previous_response_id`, `conversation`, and `background` are unsupported and ignored.
-- `service_tier`: uses the API default unless launched with `--fast` (`"priority"`); calls can override it.
 - Optional: `tools` for your own tools (`tool_choice` is always `"auto"`), `text` for structured output (e.g. `{"format":
   {"type": "json_object"}}`), `reasoning={"effort": "high"}` to set the reasoning effort to `high`
   (values below `lowest_reasoning_effort` are raised to it).
@@ -88,7 +87,7 @@ can use them.
 
 - `call_llm_api(input, **params)`: a plain model call without predefined agent instructions or the host tool.
   It is not you, just a way to use intelligence as a function; it cannot choose a cell and is safe to call concurrently.
-  Parameters and results follow `client.responses.create`, with a default model and the configured service tier.
+  Parameters and results follow `client.responses.create`, with a default model.
   Returns a Response (read `.output_text`), or an event stream with `stream=True`.
 - `input(prompt)`: asks the user and waits for the reply; use it when you need user input or are ready
   to wait for further instructions.
@@ -140,7 +139,6 @@ class Mind:
         *,
         lowest_reasoning_effort: str = "medium",
         reasoning_effort: str = "medium",
-        service_tier: str | None = None,
     ):
         for effort in (lowest_reasoning_effort, reasoning_effort):
             if effort not in REASONING_EFFORTS:
@@ -156,7 +154,6 @@ class Mind:
         )
         self.lowest_reasoning_effort = lowest_reasoning_effort
         self.reasoning_effort = reasoning_effort
-        self.service_tier = service_tier
 
     def wake(self, input=(), *, submit: Submit, logger=None, **body) -> Response:
         """Wake the mind. Exposed to cells as `call_me`.
@@ -197,8 +194,6 @@ class Mind:
             print(r.output_text)
         """
         body = _merge_extra_body({**body, "input": input})
-        if self.service_tier is not None:
-            body.setdefault("service_tier", self.service_tier)
         for field in ("background", "previous_response_id", "conversation"):
             body.pop(field, None)
         reasoning = body.get("reasoning") or {}
@@ -264,7 +259,7 @@ class Mind:
 
         No predefined agent instructions or host tool are added, so it cannot schedule a cell and is
         safe to call concurrently. Exposed to cells as `call_llm_api`; returns the Response or event stream unchanged.
-        Uses the mind's model and configured service tier as defaults, with logging; failed responses pass through unchanged.
+        Only a default model and logging are added; parameters and failed responses pass through unchanged.
 
         Example (cell side):
             with ThreadPoolExecutor(8) as pool:
@@ -272,8 +267,6 @@ class Mind:
         """
         request = {**params, "input": input}
         request.setdefault("model", self.model)
-        if self.service_tier is not None:
-            request.setdefault("service_tier", self.service_tier)
         metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_llm_api"}
         log_info(logger, "model_request", **metadata, request=request)
         try:
