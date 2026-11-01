@@ -74,13 +74,14 @@ def _wait_after_stop(info: ExecutionInfo) -> None:
     If that fails (say build_context is broken), this cell fails as well, and core's next repair cell runs as usual.
     """
     global call_me
-    if not (history and (history[-1]["error"] or "").rstrip().endswith(STOPPED)):  # noqa: F821 -- core binds it.
+    if not (len(history) > 1 and (history[-2]["error"] or "").rstrip().endswith(STOPPED)):  # noqa: F821 -- core binds it.
         return
+    history[-1]["summary"] = "Wait for the user after a stop."  # noqa: F821
     wake = call_me  # Core binds call_me for each cell.
 
     def wait_for_user(input: object = (), **params: Any) -> Response:
         note = (
-            f"The user stopped cell {len(history) - 1} partway; its side effects are not rolled back "  # noqa: F821
+            f"The user stopped cell {len(history) - 2} partway; its side effects are not rolled back "  # noqa: F821
             f"(record in history, state in globals()). Their message:\n\n{globals()['input']()}"
         )
         return wake(input=[*build_context(), {"role": "user", "content": note}], **params)
