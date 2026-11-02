@@ -30,11 +30,11 @@ Deadline behavior is limited by platform interruption support. Native code and c
 | Receive incomplete/failed output with apparent calls | No partial effects; bounded policy retries or propagates; attempts remain inspectable |
 | Receive missing/duplicate call identities or unsupported arguments | No ambiguous pairing or invalid execution; identifiable rejected calls receive errors |
 | Receive opaque provider items or optional metadata | Accepted data remains usable through storage and subsequent projection |
-| Receive empty, reasoning-only or text-only completed output | Continue with preserved output and a reminder; exhaustion enters recovery, and exhaustion during recovery uses its existing fallback |
+| Receive empty, whitespace-only or reasoning-only completed output | Continue with preserved output and a reminder; exhaustion enters recovery, and exhaustion during recovery uses its existing fallback |
 | Receive a refusal, an unrepairable rejection or another permanent rejection | Refusal and unrepairable rejection stop without recovery; other rejections enter recovery once and stop if recovery's own request is rejected; an interactive session keeps the live environment and reads new input |
 | Fail normal work and recovery persistently | Fallback work may start fresh recovery; after two consecutive fallbacks the next failure stops the turn with its cause recorded |
-| End a turn from a cell | Require a nonblank message and a successfully recorded directly dispatched cell; display once, retain final context, and keep the REPL usable for the next turn |
-| Fail after requesting end, nest model steps, or end before remaining batch calls | Failed intent does not finish; nested/recovery endings stay scoped; skipped calls receive results without executing |
+| Receive nonblank ordinary reply text without calls | A complete accepted response ends the invocation; display once, retain final context, and keep the REPL usable for the next turn; requests allow ordinary replies |
+| Receive text with calls, print a final-looking message, or nest model steps | Text with calls executes the entire batch and continues; cell output cannot end the turn; nested/recovery completion stays scoped |
 | Reset during either sibling in a response batch | Whole batch and both results remain paired, including completed siblings |
 | Reset with/without handoff, then fail reset persistence | No automatic model call/summary or live-state loss; failed reset does not change the boundary |
 | Inspect large output through Context | View may shorten; full evidence remains retrievable |

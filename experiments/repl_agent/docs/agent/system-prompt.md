@@ -47,4 +47,4 @@ Prompt sections carry durable working principles. From the discovery pointers, t
 
 Instructions guide use of execution boundaries, recording and context policy; code must implement those mechanisms. When changing guidance, inspect the composed prompt for contradictions, preserve the old version and verify the next real request path. Remove obsolete guidance rather than accumulating patches.
 
-The run_cell section states when to call `end_turn(message)`: after the checked final result, or in recovery once normal work can resume ([explicit end of a turn](execution.md#explicit-end-of-a-turn)). Process exit is never normal completion.
+The run_cell section states when to return an ordinary final reply without tool calls: after the checked final result, or in recovery once normal work can resume ([end of a turn](execution.md#end-of-a-turn)). Process exit is never normal completion.

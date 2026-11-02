@@ -71,4 +71,4 @@ Neither loading nor repair resends a request, replays source or assumes external
 
 See [Context](context.md) for selection and reset, and [Recovery mode](recovery.md) for the repair flow.
 
-An explicit ending records the owning successful cell and final message. Projection includes this final assistant message after the tool result; trajectory export presents it as agent output. The cause of an explicit stop stays in history without claiming completion. Old sessions remain readable; loading does not invent endings for historical implicit completions.
+A final ordinary reply is retained in its accepted model response and projected as assistant output. Historical explicit ending events remain readable and contribute their final message to context and trajectory export; new completions do not create them. The cause of an explicit stop stays in history without claiming completion. Loading does not invent ending events.

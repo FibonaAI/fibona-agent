@@ -36,7 +36,7 @@ This input is built directly from Session, independently of normal Context. Reco
 
 Repair uses the shared model step to inspect definitions, read relevant history, change code or restore an earlier definition. Its effects happen in the original environment. It does not resume the user's task or call the normal work loop while repair is still in progress.
 
-Tool calls continue repair until a successful cell commits `end_turn(message)` for this recovery invocation. The agent records the exit and tries the normal loop again for the same user turn. The user message is not appended again, and no new input is read.
+Tool calls continue repair until a complete accepted response returns nonblank ordinary reply text without calls for this recovery invocation. The agent records the exit and tries the normal loop again for the same user turn. The user message is not appended again, and no new input is read.
 
 Recovery observations remain in history but do not automatically enter the normal working context or its usage estimate. Successful return does not itself reset normal Context. The next normal iteration establishes whether the repaired capability actually works; a failure there can start a fresh recovery invocation.
 

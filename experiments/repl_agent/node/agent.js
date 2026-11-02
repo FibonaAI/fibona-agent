@@ -68,11 +68,10 @@ maintenance and self-modification in that understanding.`,
 
 run_cell is your sole model-facing tool for executing code. Use it to observe, act and modify the
 environment; inspect its interface and implementation for execution and output details.
-When you have completed the user's task and checked the result, call
-end_turn(message) as the last action in a cell, with your final response
-to the user. Use ordinary replies for progress updates while continuing work.
+When you have completed the user's task and checked the result, return your final response
+to the user without tool calls. Replies accompanying tool calls are progress updates while continuing work.
 
-In recovery mode, call end_turn(message) when the repair is complete
+In recovery mode, return a reply without tool calls when the repair is complete
 and normal work can resume.
 
 Organize each cell around a clear intent, making dependencies, effects and results easy to understand
@@ -302,7 +301,6 @@ var run_cell = async function run_cell(code, { call_id = null, timeout = null, s
       parent?.signal.throwIfAborted();
       const parent_cell_id = parent?.log === log ? parent.cell_id : null;
       const cell_id = log.append("cell_start", { code, call_id, timeout: seconds, ...record_origin(log), parent_cell_id });
-      if (call_id !== null && scope?.call_id === call_id) scope.cell_id = cell_id;
       const now = performance.now.bind(performance);
       const started = now();
       const controller = new AbortController();
@@ -408,13 +406,13 @@ var recorded_request = async function recorded_request(items, { attempt }) {
   const origin = record_origin(log);
   const request_id = log.append("model_request", {
     model: requested_model, reasoning, max_output_tokens: model_options.max_output_tokens ?? null,
-    tool_choice: { type: "function", name: "run_cell" }, parallel_tool_calls: false,
+    parallel_tool_calls: false,
     input_items: items.length, attempt, ...origin,
   });
   let data;
   try {
     response = await request_model(JSON.parse(JSON.stringify(items)), {
-      tool_choice: { type: "function", name: "run_cell" }, parallel_tool_calls: false,
+      parallel_tool_calls: false,
     });
     data = {
       request_id, response_id: response.id ?? null, model: requested_model, response_model: response.model ?? null,
@@ -571,26 +569,13 @@ var repair_pending = function repair_pending(log = null, response_id = null) {
   }
 };
 
-// Explicit invocation endings and provider stops are distinct from process exit.
+// Provider stops are distinct from process exit.
 /** Stop the current turn without recovery: refusal, unrepairable rejection or repeated failure. */
 var ModelStopError = class ModelStopError extends Error {};
-/** Call once as the last action of the directly dispatched model cell.
- * Its nonblank message commits only after successful cell-end recording.
- * Recovery/nested model steps end themselves; direct nested cells cannot end a parent. */
-var end_turn = function end_turn(message) {
-  const scope = operation.getStore(), active = active_cell.getStore();
-  if (!scope || !active || active.log !== scope.log || scope.call_id == null
-      || active.cell_id !== scope.cell_id) {
-    throw new Error("end_turn requires a directly dispatched model cell");
-  }
-  if (typeof message !== "string" || !message.trim()) throw new TypeError("end_turn requires a nonblank message");
-  if (scope.end_message != null) throw new Error("end_turn may be requested only once per cell");
-  scope.end_message = message;
-};
 
-/** Three response attempts cover transient failures and no-call continuations.
- * Only a successful end_turn cell completes. Refusal stops; exhausted or non-retryable
- * failures enter recovery, where a non-retryable failure stops instead of cycling. */
+/** Three response attempts cover transient failures and empty/reasoning-only continuations.
+ * A nonblank reply without calls completes; tool batches always continue. Refusal stops;
+ * exhausted or non-retryable failures enter recovery, where a non-retryable failure stops. */
 var agent_step = async function agent_step(items) {
   const log = operation.getStore()?.log ?? session;
   const scope = { log, ...record_origin(log), response_id: null };
@@ -602,13 +587,14 @@ var agent_step = async function agent_step(items) {
         let code, reason, retryReason, retryable;
         const status = response.status;
         if (status === "completed") {
-          let refused = false;
+          let refused = false, has_reply = false;
           for (const item of response.output) {
             if (item.type !== "message") continue;
             for (const part of item.content) {
               if (part.type === "output_text" || part.type === "refusal") {
                 console_write((part.type === "output_text" ? part.text : part.refusal) + "\n");
                 refused ||= part.type === "refusal";
+                has_reply ||= part.type === "output_text" && Boolean(part.text.trim());
               }
             }
           }
@@ -618,10 +604,11 @@ var agent_step = async function agent_step(items) {
           }
           calls = response.output.filter(item => item.type === "function_call");
           if (calls.length) break;
+          if (has_reply) return "completed";
           items = [...items, ...JSON.parse(JSON.stringify(log.records[scope.response_id].output)), { role: "developer",
-            content: "No tool call was returned. Continue through run_cell. To finish this invocation, call end_turn(message) in a successful cell; ordinary text does not end it." }];
+            content: "No tool call or nonblank reply was returned. Continue through run_cell, or return a final reply without tool calls when this invocation is complete." }];
           code = null;
-          reason = "No tool call was returned";
+          reason = "No tool call or nonblank reply was returned";
           retryReason = "no_tool_calls";
           retryable = true;
         } else {
@@ -642,7 +629,7 @@ var agent_step = async function agent_step(items) {
           reason: retryReason, error_code: code, delay_seconds: delay });
         if (delay) await sleep(delay * 1000);
       }
-      for (const [index, call] of calls.entries()) {
+      for (const call of calls) {
         let code, timeout;
         try {
           if (call.name !== "run_cell") throw new Error(`Unknown tool: ${call.name}`);
@@ -656,19 +643,7 @@ var agent_step = async function agent_step(items) {
           log.append("tool_error", { call_id: call.call_id, response_id: scope.response_id, error: error.message });
           continue;
         }
-        scope.call_id = call.call_id; scope.cell_id = scope.end_message = null;
-        const result = await run_cell(code, { call_id: call.call_id, timeout });
-        const message = scope.end_message;
-        scope.call_id = scope.cell_id = scope.end_message = null;
-        if (result.status === "completed" && message !== null) {
-          for (const skipped of calls.slice(index + 1)) log.append("tool_error", {
-            call_id: skipped.call_id, response_id: scope.response_id,
-            error: "Not executed: end_turn completed this invocation.",
-          });
-          log.append("turn_end", { cell_id: result.cell_id, response_id: scope.response_id, message, ...record_origin(log) });
-          console_write(message + "\n");
-          return "completed";
-        }
+        await run_cell(code, { call_id: call.call_id, timeout });
       }
       return "continue";
     } finally {
@@ -705,7 +680,7 @@ var recover = async function recover(reason) {
     + "Read history in small chunks and inspect current state before acting. Repair or roll back the fault; keep the core capabilities unchanged. "
     + "Do not replay completed effects or execute the original task here. Do not invoke the work loop during repair. "
     + "The main context is paused, not reset. Change it or leave continuation information only as needed for the repair. "
-    + "Verify what you can, then call end_turn(message) in a successful cell when ready to resume. The agent will try the repaired work loop next.";
+    + "Verify what you can, then return a reply without tool calls when ready to resume. The agent will try the repaired work loop next.";
   log.append("mode", { name: "recovery", reason, content: note });
   const status = await operation.run({ log, mode: "recovery", mode_id: start }, async () => {
     let status = "failed";
@@ -778,7 +753,6 @@ var input = async function input(prompt = "") {
 // Plain name-to-purpose index, maintained by the agent under the prompt's tool usage policy.
 // Detailed parameters, effects and cancellation limits belong beside each callable.
 var tool_catalog = {
-  end_turn: "End this invocation after a successful model cell, recording and displaying its final message.",
   display: "Present values to the user and record them separately from model observations.",
   input: "Read a line asynchronously; returns null at EOF. Present questions with display first.",
   sleep: "Await a delay in milliseconds with the current cell's cancellation signal.",

@@ -48,14 +48,14 @@ work loop:
     build input with the current Context
     check the request budget
     run a shared model step
-    if a successful cell committed end_turn: finish the turn
+    if a complete reply has nonblank text and no calls: finish the turn
     if it handled tools: repeat with updated evidence
     otherwise: continue or propagate an explicit stop
 ```
 
 Resolve replaceable policies through current live bindings on subsequent invocations. Active calls are not rewritten by rebinding a name. A normal iteration uses a matching session and Context; do not send one log's projected calls while recording results in another.
 
-Accepted model reply text stays in history and is shown to the user once before executing tools. Code uses `display` for user-facing content produced during cell execution. Normal completion requires `end_turn(message)` in a successfully recorded model-linked cell. The message is then recorded and displayed; the REPL remains alive. This ends the current invocation, not a claim that the task is correct. Empty output, reasoning-only output and ordinary prose without calls do not finish the turn. An ordinary cell error is an observation for the next model step, not itself a reason to enter recovery.
+Accepted model reply text stays in history and is shown to the user once before executing tools. Code uses `display` for user-facing content produced during cell execution. Normal completion requires a complete accepted response with nonblank ordinary reply text and no tool calls. The response is recorded and displayed; the REPL remains alive. This ends the current invocation, not a claim that the task is correct. Empty and reasoning-only output do not finish the turn. An ordinary cell error is an observation for the next model step, not itself a reason to enter recovery.
 
 ## Shared model step
 
@@ -64,10 +64,10 @@ Normal work and recovery use the same sequence:
 1. Make a recorded request with explicit input.
 2. Accept only a complete response for execution. Preserve incomplete output as evidence, without executing it or replaying it as accepted calls.
 3. Process tool calls sequentially. Invalid arguments produce a result explaining the dispatch error; valid calls use recorded execution. Ordinary execution errors remain results.
-4. Continue after tools unless a successful cell committed `end_turn`. Record skipped remaining calls without executing them when a batch ends.
+4. Continue after tools. A response with tools executes its complete batch even when it also contains reply text; cell output cannot end the invocation.
 5. If dispatch stops early, resolve unanswered calls in this step's batch without executing them. Do not close active enclosing cells or another step's pending siblings.
 
-Requests driving this step require the code-execution tool; raw auxiliary model requests may choose other settings. A completed response with no calls retains valid provider output and receives a continuation reminder within the same bounded attempt budget. Exhaustion follows the same failure path as other exhausted response retries: normal work enters recovery; failure during recovery uses its existing fallback. Refusal and rejections the model cannot repair stop explicitly; see [failure boundaries](execution.md#failure-boundaries).
+Requests driving this step allow the model to choose code execution or an ordinary final reply. A completed response with neither calls nor nonblank reply text retains valid provider output and receives a continuation reminder within the same bounded attempt budget. Exhaustion follows the same failure path as other exhausted response retries: normal work enters recovery; failure during recovery uses its existing fallback. Refusal and rejections the model cannot repair stop explicitly; see [failure boundaries](execution.md#failure-boundaries).
 
 Use a bounded response retry policy for incomplete output and transient provider failures. Attempts concern the same selected input, and retries must never repeat already executed effects. Record retry decisions. Transport retries belong to the provider client and must be considered separately so total retry behavior is understandable. Permanent failures and exhausted attempts leave the step.
 

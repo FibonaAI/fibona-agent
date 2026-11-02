@@ -94,11 +94,10 @@ maintenance and self-modification in that understanding.
 
 run_cell is your sole model-facing tool for executing code. Use it to observe, act and modify the
 environment; inspect its interface and implementation for execution and output details.
-When you have completed the user's task and checked the result, call
-end_turn(message) as the last action in a cell, with your final response
-to the user. Use ordinary replies for progress updates while continuing work.
+When you have completed the user's task and checked the result, return your final response
+to the user without tool calls. Replies accompanying tool calls are progress updates while continuing work.
 
-In recovery mode, call end_turn(message) when the repair is complete
+In recovery mode, return a reply without tool calls when the repair is complete
 and normal work can resume.
 
 Organize each cell around a clear intent, making dependencies, effects and results easy to understand
@@ -514,8 +513,6 @@ async def run_cell(code, *, timeout=None, call_id=None):
             timeout=seconds,
             **{**record_origin(log), "parent_cell_id": parent_id},
         )
-        if call_id is not None and scope and scope.get("call_id") == call_id:
-            scope["cell_id"] = cell_id
         execution = object()  # Cell IDs are session-local; deadline ownership is invocation-local.
         token = active.set((log, cell_id))
         # Model-facing output becomes a tool result; display bypasses this capture.
@@ -636,7 +633,6 @@ async def recorded_request(items, *, attempt):
         model=requested_model,
         reasoning=reasoning,
         max_output_tokens=model_options.get("max_output_tokens"),
-        tool_choice={"type": "function", "name": "run_cell"},
         parallel_tool_calls=False,
         input_items=len(items),
         attempt=attempt,
@@ -645,7 +641,6 @@ async def recorded_request(items, *, attempt):
     try:
         response = await request_model(
             json.loads(json.dumps(items)),
-            tool_choice={"type": "function", "name": "run_cell"},
             parallel_tool_calls=False,
         )
         usage = getattr(response, "usage", None)
@@ -936,37 +931,13 @@ class ModelStopError(RuntimeError):
     """Stop the current turn without recovery: refusal, unrepairable rejection or repeated failure."""
 
 
-def end_turn(message):
-    """Request completion of this directly dispatched model cell's invocation.
-
-    Call once, as the cell's last action. The nonblank final message is recorded and
-    displayed only after this cell succeeds. Errors/cancellation discard the intent.
-    Recovery and nested model steps end only themselves; the REPL stays alive.
-    """
-    scope = operation.get()
-    active = active_cell.get()
-    if (
-        not scope
-        or not active
-        or active[0] is not scope["log"]
-        or scope.get("call_id") is None
-        or active[1] != scope.get("cell_id")
-    ):
-        raise RuntimeError("end_turn requires a directly dispatched model cell")
-    if not isinstance(message, str) or not message.strip():
-        raise ValueError("end_turn requires a nonblank message")
-    if scope.get("end_message") is not None:
-        raise ValueError("end_turn may be requested only once per cell")
-    scope["end_message"] = message
-
-
 async def agent_step(items):
-    """Require tool actions; complete only after a successful cell calls end_turn.
+    """Execute tool calls or complete on a nonblank ordinary reply without calls.
 
-    Three response attempts cover transient failures and no-call continuations.
+    Three response attempts cover transient failures and empty/reasoning-only output.
     Refusal stops explicitly. Exhausted or non-retryable failures enter recovery;
     in recovery, a non-retryable failure stops instead of cycling through fallback.
-    Never replay executed effects; end_turn commits only after cell-end recording.
+    Never replay executed effects.
     """
     import asyncio
     import json
@@ -981,6 +952,7 @@ async def agent_step(items):
             status = getattr(response, "status", "completed")
             if status == "completed":
                 refused = False
+                has_reply = False
                 for item in response.output:
                     if item.type == "message":
                         for part in item.content:
@@ -988,19 +960,22 @@ async def agent_step(items):
                                 text = part.text if part.type == "output_text" else part.refusal
                                 print(text, file=console, flush=True)
                                 refused |= part.type == "refusal"
+                                has_reply |= part.type == "output_text" and bool(text.strip())
                 if refused:
                     log.append("model_stop", response_id=scope["response_id"], reason="refusal")
                     raise ModelStopError("Model refused the request")
                 calls = [item for item in response.output if item.type == "function_call"]
                 if calls:
                     break
+                if has_reply:
+                    return "completed"
                 reminder = {
                     "role": "developer",
-                    "content": "No tool call was returned. Continue through run_cell. To finish this invocation, call end_turn(message) in a successful cell; ordinary text does not end it.",
+                    "content": "No tool call or nonblank reply was returned. Continue through run_cell, or return a final reply without tool calls when this invocation is complete.",
                 }
                 # Preserve complete provider items for continuation, not incomplete output.
                 items = [*items, *json.loads(json.dumps(log.records[scope["response_id"]]["output"])), reminder]
-                code, reason, retry_reason = None, "No tool call was returned", "no_tool_calls"
+                code, reason, retry_reason = None, "No tool call or nonblank reply was returned", "no_tool_calls"
                 retryable = True
             else:
                 error = getattr(response, "error", None)
@@ -1029,7 +1004,7 @@ async def agent_step(items):
             )
             if delay:
                 await asyncio.sleep(delay)
-        for index, call in enumerate(calls):
+        for call in calls:
             try:
                 if call.name != "run_cell":
                     raise ValueError(f"Unknown tool: {call.name}")
@@ -1046,27 +1021,7 @@ async def agent_step(items):
             except (ValueError, KeyError, TypeError) as error:
                 log.append("tool_error", call_id=call.call_id, response_id=scope["response_id"], error=str(error))
                 continue
-            scope.update(call_id=call.call_id, cell_id=None, end_message=None)
-            result = await run_cell(code, timeout=timeout, call_id=call.call_id)
-            message = scope["end_message"]
-            scope.update(call_id=None, cell_id=None, end_message=None)
-            if result["status"] == "completed" and message is not None:
-                for skipped in calls[index + 1 :]:
-                    log.append(
-                        "tool_error",
-                        call_id=skipped.call_id,
-                        response_id=scope["response_id"],
-                        error="Not executed: end_turn completed this invocation.",
-                    )
-                log.append(
-                    "turn_end",
-                    cell_id=result["cell_id"],
-                    response_id=scope["response_id"],
-                    message=message,
-                    **record_origin(log),
-                )
-                print(message, file=console, flush=True)
-                return "completed"
+            await run_cell(code, timeout=timeout, call_id=call.call_id)
         return "continue"
     finally:
         try:
@@ -1124,7 +1079,7 @@ async def recover(reason):
         "keep the core capabilities unchanged. Do not replay completed effects or execute the original task here. "
         "Do not invoke the work loop during repair. The main context is paused, not reset. "
         "Change it or leave continuation information only as needed for the repair. "
-        "Verify what you can, then call end_turn(message) in a successful cell when ready to resume. "
+        "Verify what you can, then return a reply without tool calls when ready to resume. "
         "The agent will try the repaired work loop next."
     )
     log.append("mode", name="recovery", reason=reason, content=note)
@@ -1326,7 +1281,6 @@ def display(*values, sep=" ", end="\n", flush=True):
 # Plain name-to-purpose index, maintained by the agent under the prompt's tool usage policy.
 # Keep detailed contracts beside each callable; native input uses Python's help(input).
 tool_catalog = {
-    "end_turn": "End this invocation after a successful model cell, recording and displaying its final message.",
     "run_process": "Run a bounded POSIX command and return output after owned process-group cleanup.",
     "display": "Present values to the user and record them separately from model observations.",
     "input": "Read a line synchronously; raises EOFError at end of input. Present questions with display first.",

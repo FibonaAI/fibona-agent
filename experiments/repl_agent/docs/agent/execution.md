@@ -19,13 +19,13 @@ The model acts through `run_cell`, which executes source in the persistent langu
 
 Distinguish complete, incomplete and failed responses. Only a complete accepted response may dispatch calls. Validate enough to identify each call unambiguously, pair its result and execute valid source. Invalid tool names or arguments produce an associated dispatch error without executing a cell. Missing or ambiguous call identities and malformed envelopes cannot be treated as successful empty responses. Provider-specific metadata that is accepted must remain safe through recording and projection; do not let optional metadata break otherwise usable history.
 
-Preserve complete provider output, including opaque items needed in later requests. Do not infer calls from code-like text or execute partial streaming output. Completed output without calls does not end the step. Preserve its valid output and request a tool call with a continuation reminder, within the bounded attempt budget. The provider adapter maps logical messages, accepted calls and results into its wire format without changing pairing or order. Missing usage is unknown, not zero.
+Preserve complete provider output, including opaque items needed in later requests. Do not infer calls from code-like text or execute partial streaming output. Completed output with nonblank ordinary reply text and no calls ends the invocation. Empty or reasoning-only output receives a continuation reminder within the bounded attempt budget, preserving valid provider output. The provider adapter maps logical messages, accepted calls and results into its wire format without changing pairing or order. Missing usage is unknown, not zero.
 
-## Explicit end of a turn
+## End of a turn
 
-`end_turn(message)` is an ordinary callable inside the directly dispatched model cell, not another model tool or a process exit. It requires a nonblank message and registers one ending intent for that cell. Nested direct cells cannot end their parent; nested model steps have their own scope. A later exception, timeout or cancellation discards the intent. Only a successfully recorded cell may commit the ending event, after pairing any skipped remaining batch calls. The event retains the final message for presentation, later context and trajectory export. Recording failure cannot become a successful end.
+A complete accepted model response with nonblank ordinary reply text and no tool calls ends the current invocation. Its recorded response retains the final text for presentation, later context and trajectory export. Recording failure cannot become successful completion. A response containing calls continues work after executing the complete batch, even if it also includes reply text. Printing a final-looking message inside a cell is an observation and does not end the turn.
 
-Recovery uses the same capability to finish repair and resume normal work; it cannot finish the enclosing user turn. Explicit stops (see [failure boundaries](#failure-boundaries)) are not normal completion.
+Recovery uses the same response semantics to finish repair and resume normal work; it cannot finish the enclosing user turn. Nested model steps end only their own invocation. Explicit stops (see [failure boundaries](#failure-boundaries)) are not normal completion.
 
 ## Request and batch ownership
 
@@ -73,7 +73,7 @@ A deadline is not a subprocess supervisor, rollback mechanism or sandbox. It may
 
 ## Failure boundaries
 
-No-call responses use the same bounded response retries as incomplete/transient failures. Exhaustion raises an ordinary step error: normal work enters recovery, and recovery failure uses its existing fallback. Continuation transport errors retain their ordinary error semantics.
+Responses without calls or nonblank ordinary reply text use the same bounded response retries as incomplete/transient failures. Exhaustion raises an ordinary step error: normal work enters recovery, and recovery failure uses its existing fallback. Continuation transport errors retain their ordinary error semantics.
 
 | Failure | Required behavior |
 | --- | --- |
