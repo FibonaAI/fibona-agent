@@ -103,8 +103,7 @@ def session_metrics(path: Path) -> dict:
 class ReplAgent(BaseInstalledAgent):
     capabilities = AgentCapabilities(skills=True, mcp_servers=True)
 
-    def __init__(self, *args, base_url: str | None = None, **kwargs) -> None:
-        self.base_url = base_url
+    def __init__(self, *args, **kwargs) -> None:
         self.model_settings = ModelSettings.model_validate(
             {key: kwargs.pop(key) for key in ModelSettings.model_fields if key in kwargs}
         )
@@ -151,7 +150,9 @@ class ReplAgent(BaseInstalledAgent):
         task = self.logs_dir / "instruction.txt"
         task.write_text(instruction)
         await environment.upload_file(str(task), "/installed-agent/repl-agent-task.txt")
-        env = self.model_settings.environment(self.model_name or "gpt-6-astra", self.base_url)
+        env = self.model_settings.environment(self.model_name or "gpt-6-astra")
+        if effort := self.model_settings.reasoning_effort:
+            env["FIBONA_REASONING_EFFORT"] = effort
         env["FIBONA_SESSION"] = "/logs/agent/session.jsonl"
         await self.exec_as_agent(
             environment,
