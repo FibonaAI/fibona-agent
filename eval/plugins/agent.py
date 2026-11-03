@@ -88,7 +88,6 @@ class Fibona(BaseInstalledAgent):
             "--python 3.12 --offline --no-index --find-links /opt/fibona/dist /opt/fibona/dist/fibona_agent-*.whl; "
             f"printf %s {shlex.quote(BOOTSTRAP)} > $HOME/fibona-bootstrap.py",
         )
-
         if self.mcp_servers:
             await self.exec_as_agent(
                 environment,
