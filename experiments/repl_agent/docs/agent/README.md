@@ -55,7 +55,7 @@ work loop:
 
 Resolve replaceable policies through current live bindings on subsequent invocations. Active calls are not rewritten by rebinding a name. A normal iteration uses a matching session and Context; do not send one log's projected calls while recording results in another.
 
-Accepted model reply text stays in history and is shown to the user once before executing tools. Code uses `display` for user-facing content produced during cell execution. Normal completion requires a complete accepted response with nonblank ordinary reply text and no tool calls. The response is recorded and displayed; the REPL remains alive. This ends the current invocation, not a claim that the task is correct. Empty and reasoning-only output do not finish the turn. An ordinary cell error is an observation for the next model step, not itself a reason to enter recovery.
+Accepted model reply text stays in history and is shown to the user once before executing tools. Code uses `display` for user-facing content produced during cell execution. Normal completion requires a complete accepted response with nonblank ordinary reply text and no tool calls. The response is recorded and displayed; the REPL remains alive. This ends the current invocation, not a claim that the task is correct. Empty and reasoning-only output do not finish the turn. An ordinary cell error, including task code `SystemExit` in Python, is an observation for the next model step, not itself a reason to enter recovery.
 
 ## Shared model step
 

@@ -51,6 +51,8 @@ always restore capture, deadline resources and execution ownership
 record the end when storage remains usable
 ```
 
+Task code `SystemExit` is an ordinary execution failure in Python, not host cancellation: return its traceback as an error result and leave the agent available for the next step. External cancellation and other non-task `BaseException` control signals retain their interrupted control meaning.
+
 If the start cannot be stored, do not execute. If storing the end fails, do not claim successful recording or rerun the source. A rebind of global session cannot move an active cell's end to another log. Only cells linked to accepted model calls generate tool replies; unlinked nested cells remain inspectable facts.
 
 Partial effects survive exceptions, deadlines and code rollback. A child captures its own output; a parent includes it only if it explicitly emits the child's result. Rejected competing execution must not disturb another cell's capture.

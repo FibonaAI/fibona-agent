@@ -484,9 +484,9 @@ async def run_cell(code, *, timeout=None, call_id=None):
     Supports top-level await; trailing expression values are not captured.
     Await nested cells sequentially and finish concurrent I/O before returning.
     A deadline does not supervise child resources or reliably interrupt native code.
-    Ordinary execution exceptions become error results; cancellation and storage
-    failures propagate. No partial effects are undone. Nested calls inherit a parent,
-    not a model call ID; leave call_id unset for direct Python calls.
+    Ordinary execution exceptions, including task-code SystemExit, become error results;
+    external cancellation and storage failures propagate. No partial effects are undone.
+    Nested calls inherit a parent, not a model call ID; leave call_id unset for direct Python calls.
     timeout is a positive number of seconds, defaulting to the editable cell_timeout.
     Expiry returns an error result; inspect partial effects and child resources before retrying.
     """
@@ -524,18 +524,14 @@ async def run_cell(code, *, timeout=None, call_id=None):
                 async with cell_execution_timeout(seconds, cell_id, execution):
                     await execute(code)
         except BaseException as exc:
-            status = (
-                "interrupted"
-                if not isinstance(exc, Exception)
+            task_exit = isinstance(exc, SystemExit)
+            interrupted = not task_exit and (
+                not isinstance(exc, Exception)
                 or (isinstance(exc, CellExecutionTimeoutError) and exc.execution is not execution)
-                else "error"
             )
+            status = "interrupted" if interrupted else "error"
             error = traceback.format_exc()
-            if (
-                isinstance(exc, (RecordingError, ModelStopError))
-                or not isinstance(exc, Exception)
-                or (isinstance(exc, CellExecutionTimeoutError) and exc.execution is not execution)
-            ):
+            if isinstance(exc, (RecordingError, ModelStopError)) or interrupted:
                 raise
         finally:
             try:

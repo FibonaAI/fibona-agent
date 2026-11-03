@@ -14,7 +14,7 @@ Verify timeout of a process pool and a command with grandchildren (including a c
 
 Python asynchronous cancellation is delivered at supported waiting points; some synchronous work requires additional platform facilities. The executor associates ownership with the current asynchronous task and rejects competing tasks. The agent wraps the source-only raw executor with its own sequential guard, recording, output capture and deadlines, rejecting competing agent calls before touching records or shared streams.
 
-Python functions resolve global names in their defining namespace when called, so rebinding a helper, such as the function that builds model input, affects later calls; callers retaining the old reference keep using it. Function-local imports reduce the effect of incidental name reuse on recording, error reporting and transport. Policy bindings such as prompt, context, tools and loops remain deliberately editable.
+Python functions resolve global names in their defining namespace when called, so rebinding a helper, such as the function that builds model input, affects later calls; callers retaining the old reference keep using it. Function-local imports reduce the effect of incidental name reuse on recording, error reporting and transport. Policy bindings such as prompt, context, tools and loops remain deliberately editable. Task-code `SystemExit` is captured as an ordinary cell error rather than terminating the agent; external cancellation retains its control meaning.
 
 ## Tools and storage
 

@@ -10,6 +10,7 @@ The [design](README.md) has observable consequences when work succeeds, fails or
 | Start a language entry point from another working directory | Launcher evaluates its sibling agent source once and closes the REPL on normal or error exit |
 | Await a child, then attempt overlapping competing execution | Sequential nesting works; competition does not execute or disturb capture |
 | Fail parsing or mutate state then throw | Error reaches the right boundary, source is inspectable, partial effects remain, later execution works |
+| Raise `SystemExit` in Python task code, including exit status 0 | Cell returns an ordinary error with traceback, the agent does not exit, and a later cell can continue with retained state |
 | Display inside nested cells and outside cells | Text persists with the correct session/cell ownership, remains visible in the console and trace, and never enters model input |
 | Produce parent/child observations and user display | Nested observations are separate; display bypasses model capture; accepted model text appears once before tools, including the final reply; reasoning and retry attempts are not displayed; trajectories label each output audience |
 | Change a global session binding during a cell/batch | Started operations and accepted calls remain associated with the originating log |
