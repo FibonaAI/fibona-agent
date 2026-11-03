@@ -26,17 +26,21 @@ See `example.yaml` for a full example; unknown keys are rejected.
 | `name` | Run name suffix. |
 | `archive` | TOS archive location, `tos://bucket/prefix`. |
 | `dataset` / `model` | As `harbor run -d` / `-m` take them. |
-| `base_url` | Optional model API endpoint. |
 | `agent` | Optional Harbor agent name or importable `module:Class`; defaults to `plugins.agent:Fibona`. |
-| `model_settings` | Optional: `reasoning_effort`, `max_output_tokens`, `api_retries`, `context_tokens`, `extra_body` (JSON request extensions). |
+| `model_settings` | Optional: `reasoning_effort`, `lowest_reasoning_effort`, `api_retries`, `extra_body` (JSON request extensions). |
 | `settings` | SSH user, key and port; `registry` is where task images are mirrored. |
 | `groups` | Where tasks run: either `hosts` (fixed hosts with resource budgets) or `ecs` (workers launched for the job). `tasks` globs match in order; empty is the catch-all. |
 | `exclude` / `limit` | Tasks to skip / at most this many tasks. |
 | `extra_args` | Passed to `harbor run` as is. |
 
-For adapters using the shared environment helper, explicit YAML values override environment defaults.
-`model_settings.xxx` maps to `FIBONA_XXX` (objects use JSON), `model` to `FIBONA_MODEL`, and
-`base_url` to `FIBONA_BASE_URL`; supported settings depend on the adapter.
+For adapters using the shared environment helper, model settings come only from YAML;
+omitted values use code defaults. Only `FIBONA_API_KEY` and `FIBONA_BASE_URL` are read from the launch environment.
+`reasoning_effort` and `lowest_reasoning_effort` go directly to Fibona's corresponding CLI options.
+Both default to `medium`; lower requests are raised to the minimum. Set both to `low` to use low effort.
+`max_output_tokens` and `context_tokens` are no longer accepted in `model_settings`.
+Other `model_settings.xxx` values map to `FIBONA_XXX` (objects use JSON), and `model` to `FIBONA_MODEL`;
+supported settings depend on the adapter. Set the API endpoint only through `FIBONA_BASE_URL`.
+Existing configs with `base_url` must move that value to the environment and remove the YAML field.
 
 ## Make targets
 
