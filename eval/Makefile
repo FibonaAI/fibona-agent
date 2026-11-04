@@ -1,4 +1,4 @@
-# Everything is a job: make job CONFIG=<config.yaml>, starting from example.yaml. See job.py.
+# Everything is a job: make job CONFIG=<config.yaml>, starting from local.example.yaml or cluster.example.yaml. See job.py.
 
 # Pinned tools; uv fetches and caches the Python ones on first use, crane mirrors task images.
 HARBOR_VERSION := 0.24.0
@@ -15,10 +15,11 @@ export UV_PYTHON_INSTALL_DIR := $(CURDIR)/python
 need = $(foreach v,$1,$(if $($v),,$(error $v is required)))
 
 .PHONY: job dist image viz
+.SILENT: job dist
 
 # Run one benchmark job end to end and archive it: mirror task images, launch ECS workers, sync dist,
 # run Harbor, delete the workers, upload experiments/<run>/ to the config's TOS archive.
-# Usage: make job CONFIG=/path/to/config.yaml        (start from example.yaml; relative paths are from eval/)
+# Usage: make job CONFIG=/path/to/config.yaml        (start from an *.example.yaml; relative paths are from eval/)
 # Workers are deleted however the job ends; only a SIGKILLed job leaves them, tagged fibona-job=<run> in ECS.
 # Needs VOLCENGINE_ACCESS_KEY/VOLCENGINE_SECRET_KEY and TOS_ACCESS_KEY/TOS_SECRET_KEY in the environment.
 job: dist bin/crane
@@ -29,9 +30,9 @@ job: dist bin/crane
 # Python. Task containers install from them offline, so workers must share this machine's CPU architecture.
 # Usage: make dist                                   (make job runs it; use alone only to inspect dist/)
 dist:
-	rm -rf dist && uv build --wheel -o dist ..
+	rm -rf dist && uv build -q --wheel -o dist ..
 	uv export --project .. --frozen --no-hashes --no-dev --no-emit-project -q > dist/requirements.txt
-	uv python install 3.12
+	uv python install -q 3.12
 	uvx --with pysocks --python 3.12 pip@25.3 download --disable-pip-version-check -q --only-binary=:all: --index-url $(PYPI_INDEX) -r dist/requirements.txt -d dist
 	cp "$$(command -v uv)" dist/
 

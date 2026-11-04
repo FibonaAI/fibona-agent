@@ -1,4 +1,5 @@
-# Copy this anywhere, edit it, then: make -C eval job CONFIG=<path>. The job archives its own copy.
+# A cluster job: tasks run on ECS workers launched for the job (or on fixed hosts, see groups). For one machine,
+# see local.example.yaml. Copy this anywhere, edit it, then: make -C eval job CONFIG=<path>; the job archives a copy.
 name: tb2-smoke                 # The run is <UTC time>-<name>: eval/experiments/<run>/ and <archive>/<run>/.
 archive: tos://fibona-eval-archive/jobs
 dataset: terminal-bench@2.0     # Harbor dataset, as `harbor run -d` takes it.
@@ -11,26 +12,29 @@ model_settings:                 # Shared model settings; omitted values use envi
   api_retries: 8                # OpenAI client retries per call.
   # context_tokens: 1048576     # Input + output budget for agents with a context-window policy.
   # extra_body: {}             # Optional JSON request extensions, interpreted by the model API.
-settings:
+registry: fibona-cn-beijing.cr.volces.com/mlp   # Task images are mirrored here before the run and pulled from here.
+settings:                       # SSH login to every worker and host.
   user: harbor-runner
   pk: ~/.ssh/fibona-harbor-runner   # Private key path on the machine running make.
   port: 22
   # ports: {node2: 2222}        # Override the SSH port for individual hosts.
-  registry: fibona-cn-beijing.cr.volces.com/mlp   # Task images are mirrored here before the run.
 groups:                         # First matching group wins; put an optional catch-all last.
-  - hosts:                      # Fixed hosts, with scheduling budgets after system/sidecar headroom.
-      node1: {cpus: 56, memory_mb: 196608}
-    tasks: ["fix-*"]            # Task name globs, matched without the registry org prefix.
   - ecs:                        # Workers launched for this job and deleted after it; see steps/workers.py.
       count: 2
       instance_type: ecs.g3a.16xlarge         # 64 vCPU, 256 GiB.
-      budget: {cpus: 56, memory_mb: 229376}
+      budget: {cpus: 56, memory_mb: 229376}   # Scheduling budget per worker, after system/sidecar headroom.
       image_id: image-yey3mu3z3b9q7dup24so    # CPU worker image, see build/image.sh.
       zone: cn-beijing-d
       subnet_id: subnet-1c1eimqh9raio5e8j713wiixm
       security_group_ids: [sg-2f801jdyury0w4f4pzzhrpbby, sg-w0ggrhvvutc0865yk9p3w4xb]
       key_pair: fibona-songwei
-    tasks: []                   # Empty or omitted: all remaining tasks.
+    tasks: []                   # Task name globs, matched without the registry org prefix; empty: all remaining tasks.
+  # Fixed hosts instead of (or alongside) ECS: existing machines set up like a worker (build/image.sh), by IP or
+  # name, each with its scheduling budget after system/sidecar headroom. Give a group either hosts or ecs.
+  # - hosts:
+  #     10.42.2.111: {cpus: 56, memory_mb: 196608}
+  #     10.42.2.112: {cpus: 56, memory_mb: 196608, gpus: 8}
+  #   tasks: ["fix-*"]          # Put groups with specific globs before the catch-all.
 # Per-task CPU/memory/GPU requirements are read from the dataset, including separate verifiers.
 # Use extra_args: ["-n", "16"] to add a global trial cap for an API rate limit.
 # exclude: ["*-gpu"]            # Task name globs to skip.

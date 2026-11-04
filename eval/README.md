@@ -4,7 +4,7 @@ Evaluates Fibona on Harbor datasets and archives every run. One config is one jo
 `experiments/<run>/`, where `<run>` is `<UTC time>-<name>`.
 
 ```bash
-cp eval/example.yaml ~/fibona-eval-configs/my-job.yaml   # Configs live outside the repo.
+cp eval/cluster.example.yaml ~/fibona-eval-configs/my-job.yaml   # Or local.example.yaml; configs live outside the repo.
 make -C eval job CONFIG=~/fibona-eval-configs/my-job.yaml
 ```
 
@@ -19,7 +19,7 @@ A job records the code (commit and uncommitted patch) â†’ mirrors task images â†
 
 ## Config
 
-See `example.yaml` for a full example; unknown keys are rejected.
+See `local.example.yaml` (one machine) and `cluster.example.yaml` (ECS workers or fixed hosts); unknown keys are rejected.
 
 | Key | Meaning |
 |---|---|
@@ -29,8 +29,10 @@ See `example.yaml` for a full example; unknown keys are rejected.
 | `base_url` | Optional model API endpoint. |
 | `agent` | Optional Harbor agent name or importable `module:Class`; defaults to `plugins.agent:Fibona`. |
 | `model_settings` | Optional: `reasoning_effort`, `max_output_tokens`, `api_retries`, `context_tokens`, `extra_body` (JSON request extensions). |
-| `settings` | SSH user, key and port; `registry` is where task images are mirrored. |
-| `groups` | Where tasks run: either `hosts` (fixed hosts with resource budgets) or `ecs` (workers launched for the job). `tasks` globs match in order; empty is the catch-all. |
+| `registry` | Optional: task images are mirrored here before the run and pulled from here, local or cluster; every machine's Docker must be logged in to it. Without it, tasks pull from upstream. |
+| `local` | Single machine: run on this machine alone, in its Docker as the current user, within this budget (`cpus`, `memory_mb`, `gpus`). No SSH; replaces `settings` and `groups`. |
+| `settings` | Cluster jobs: SSH user, key and port. |
+| `groups` | Cluster jobs: where tasks run, either `hosts` (fixed hosts with resource budgets) or `ecs` (workers launched for the job). `tasks` globs match in order; empty is the catch-all. |
 | `exclude` / `limit` | Tasks to skip / at most this many tasks. |
 | `extra_args` | Passed to `harbor run` as is. |
 

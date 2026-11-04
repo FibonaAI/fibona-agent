@@ -61,8 +61,11 @@ def snapshot(config, job_dir: Path) -> Path:
             return host, {"error": type(error).__name__}
 
     started = time.monotonic()
-    with ThreadPoolExecutor(max_workers=len(config.hosts)) as pool:
-        workers = dict(pool.map(worker, config.hosts))
+    if config.local:
+        workers = {"localhost": resources()}
+    else:
+        with ThreadPoolExecutor(max_workers=len(config.hosts)) as pool:
+            workers = dict(pool.map(worker, config.hosts))
     now = datetime.now(UTC)
     target = job_dir / "profiles" / (now.strftime("%Y%m%dT%H%M%SZ") + ".json")
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -77,7 +80,6 @@ def snapshot(config, job_dir: Path) -> Path:
         )
         + "\n"
     )
-    print(f"profile {target}", flush=True)
     return target
 
 

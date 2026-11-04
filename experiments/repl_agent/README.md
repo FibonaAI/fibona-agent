@@ -81,7 +81,7 @@ A session is an execution history, not a checkpoint of live memory or a complete
 
 ## Harbor evaluation
 
-Copy [eval/example.yaml](../../eval/example.yaml) to a private job YAML and select
+Copy [eval/local.example.yaml](../../eval/local.example.yaml) (or `cluster.example.yaml`) to a private job YAML and select
 `agent: plugins.repl_agent:ReplAgent`. Set `model`, optional `base_url`, and
 `model_settings` for the chosen model; check its context window and output limit.
 Export `OPENAI_API_KEY` and configure workers and archive as described in the
