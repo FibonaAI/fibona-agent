@@ -84,8 +84,8 @@ A session is an execution history, not a checkpoint of live memory or a complete
 Copy [eval/local.example.yaml](../../eval/local.example.yaml) (or `cluster.example.yaml`) to a private job YAML and select
 `agent: plugins.repl_agent:ReplAgent`. Set `model`, optional `base_url`, and
 `model_settings` for the chosen model; check its context window and output limit.
-Export `OPENAI_API_KEY` and configure workers and archive as described in the
-[eval README](../../eval/README.md), then run:
+Export `FIBONA_API_KEY` (optionally `FIBONA_BASE_URL`) and configure workers and archive as described in the
+[eval README](../../eval/README.md). The adapter translates these job settings to the REPL runtime's `OPENAI_*` variables; existing `OPENAI_*` environment defaults also work. Then run:
 
 ```sh
 make -C eval job CONFIG=/path/to/job.yaml
