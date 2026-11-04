@@ -26,11 +26,16 @@ import yaml
 from harbor.environments import ec2
 from harbor.environments.capabilities import EnvironmentCapabilities
 from harbor.environments.docker import RESOURCES_COMPOSE_NAME
+from harbor.environments.docker.docker import DockerEnvironment
 from harbor.environments.tar_transfer import extract_dir
 from harbor.models.task.config import TaskConfig as TaskDefinition
 from harbor.models.task.verifier_mode import resolve_effective_verifier_env_config
 from harbor.trial.hooks import TrialEvent
+from harbor.utils.logger import logger as harbor_logger
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
+
+# Our /opt/fibona mount is for the agent alone, so Harbor's per-task note that mounts skip verifiers is noise.
+harbor_logger.addFilter(lambda record: "not propagated to separate verifier" not in record.getMessage())
 
 
 class SSHSettings(BaseModel):
@@ -40,7 +45,6 @@ class SSHSettings(BaseModel):
     pk: Path
     port: int = Field(default=22, ge=1, le=65535)
     ports: dict[str, Annotated[int, Field(ge=1, le=65535)]] = {}  # Per-host overrides of port.
-    registry: str | None = None  # Optional registry/namespace holding byte-identical task images.
 
 
 def mirror_image(image: str, registry: str | None) -> str:
@@ -48,6 +52,18 @@ def mirror_image(image: str, registry: str | None) -> str:
         return image
     repository, separator, digest = image.partition("@")
     return registry.rstrip("/") + "/" + repository.rsplit("/", 1)[-1] + (separator + digest if separator else "")
+
+
+def mirror_compose_images(compose: dict, sources: list[Path], registry: str | None) -> dict:
+    """Override every service image in the task's Compose files with its registry mirror."""
+    for source in sources:
+        if not source.exists():
+            continue
+        # Read image strings only; BaseLoader also accepts Compose's !reset/!override tags.
+        for name, service in (yaml.load(source.read_text(), Loader=yaml.BaseLoader) or {}).get("services", {}).items():
+            if isinstance(service, dict) and service.get("image"):
+                compose["services"].setdefault(name, {})["image"] = mirror_image(service["image"], registry)
+    return compose
 
 
 class Resources(BaseModel):
@@ -158,7 +174,7 @@ class SSHHosts(ec2.EC2Environment):
         if not shutil.which("ssh"):
             raise SystemExit("SSHHosts requires the OpenSSH client (`ssh`) on PATH.")
 
-    def __init__(self, *args, settings: dict, **kwargs) -> None:
+    def __init__(self, *args, settings: dict, registry: str | None = None, **kwargs) -> None:
         settings = SSHSettings.model_validate(settings)
         super().__init__(
             *args,
@@ -171,7 +187,7 @@ class SSHHosts(ec2.EC2Environment):
             ssh_port=settings.port,
             **kwargs,
         )
-        self._registry = settings.registry
+        self._registry = registry  # Registry/namespace holding byte-identical task images.
         self._ssh_ports = settings.ports
         self._compose_ops = SSHComposeOps(self)
         if self.task_env_config.docker_image:
@@ -185,7 +201,7 @@ class SSHHosts(ec2.EC2Environment):
     async def _resolve_host(self) -> None:
         self._host, self._gpu_ids = self.assigned[self.trial_paths.trial_dir.name]
         self.ssh_port = self._ssh_ports.get(self._host, self.ssh_port)
-        self.logger.info("SSH host %s, GPUs %s", self._host, self._gpu_ids)
+        self.logger.debug("SSH host %s, GPUs %s", self._host, self._gpu_ids)
 
     def _resolve_volumes(self) -> list[dict]:
         volumes = super()._resolve_volumes()
@@ -201,18 +217,8 @@ class SSHHosts(ec2.EC2Environment):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "docker-compose-mounts.json"
             write_mounts_compose_file(path, volumes)
-            compose = json.loads(path.read_text())
-            for source in [self._environment_docker_compose_path, *self.extra_docker_compose_paths]:
-                if not source.exists():
-                    continue
-                # Read image strings only; BaseLoader also accepts Compose's !reset/!override tags.
-                for name, service in (
-                    (yaml.load(source.read_text(), Loader=yaml.BaseLoader) or {}).get("services", {}).items()
-                ):
-                    if isinstance(service, dict) and service.get("image"):
-                        compose["services"].setdefault(name, {})["image"] = mirror_image(
-                            service["image"], self._registry
-                        )
+            sources = [self._environment_docker_compose_path, *self.extra_docker_compose_paths]
+            compose = mirror_compose_images(json.loads(path.read_text()), sources, self._registry)
             path.write_text(json.dumps(compose))
             await self._upload_file_to_host(path, f"{self._compose_dir_vm}/{path.name}")
 
@@ -236,6 +242,25 @@ class SSHHosts(ec2.EC2Environment):
             ]
             path.write_text(json.dumps(compose))
             await self._upload_file_to_host(path, f"{self._compose_dir_vm}/{path.name}")
+
+
+class LocalDocker(DockerEnvironment):
+    """Harbor's Docker environment on this machine, with task images from the registry mirror like SSHHosts.
+    This machine's Docker must be logged in to the registry (~/.docker/config.json)."""
+
+    def __init__(self, *args, task_env_config, registry: str | None = None, **kwargs) -> None:
+        # Before super().__init__, which takes the prebuilt image name from task_env_config.
+        if task_env_config.docker_image:
+            image = mirror_image(task_env_config.docker_image, registry)
+            task_env_config = task_env_config.model_copy(update={"docker_image": image})
+        self._registry = registry
+        super().__init__(*args, task_env_config=task_env_config, **kwargs)
+
+    def _write_mounts_compose_file(self) -> Path:
+        path = super()._write_mounts_compose_file()  # Applied last, so its images override the task's.
+        sources = [self._environment_docker_compose_path, *self.extra_docker_compose_paths]
+        path.write_text(json.dumps(mirror_compose_images(json.loads(path.read_text()), sources, self._registry)))
+        return path
 
 
 class HostPool:

@@ -2,6 +2,7 @@
 
 import subprocess
 import time
+from collections.abc import Callable
 
 import volcenginesdkecs as ecs
 from plugins.hosts import Resources
@@ -66,25 +67,47 @@ def describe(**filters) -> list:
             return instances
 
 
-def wait(ids: list[str], ssh: list[str], timeout: int = 900) -> list[str]:
-    """Wait until every instance runs and accepts SSH; return private IPs in launch order."""
-    deadline = time.monotonic() + timeout
-    while True:
-        instances = {i.instance_id: i for i in describe(instance_ids=ids)}
-        if all(i in instances and instances[i].status == "RUNNING" for i in ids):
+def wait(ids: list[str], ssh: list[str], log: Callable[[str], None], timeout: int = 900) -> list[str]:
+    """Wait until every instance runs and accepts SSH; return private IPs in launch order.
+
+    log(message) gets each instance's progress: RUNNING with its IP, ready over SSH, and every
+    30 seconds what it still waits for, with the last SSH error.
+    """
+    started = beat = time.monotonic()
+    deadline = started + timeout
+    status, ips, ready, error = dict.fromkeys(ids, "PENDING"), {}, set(), {}
+    while len(ready) < len(ids):
+        elapsed = f"{round(time.monotonic() - started)}s"
+        if starting := [i for i in ids if i not in ips]:
+            for instance in describe(instance_ids=starting):
+                status[instance.instance_id] = instance.status
+                if instance.status == "RUNNING":
+                    ip = ips[instance.instance_id] = instance.network_interfaces[0].primary_ip_address
+                    # VPC addresses are reused; a previous worker's host key would fail StrictHostKeyChecking.
+                    subprocess.run(["ssh-keygen", "-R", ip], capture_output=True)
+                    log(f"{instance.instance_id}  RUNNING {ip} ({elapsed})")
+        for instance, ip in ips.items():
+            if instance in ready:
+                continue
+            check = subprocess.run([*ssh, "-o", "ConnectTimeout=5", "-n", ip, "true"], capture_output=True, text=True)
+            if check.returncode:
+                error[instance] = (check.stderr.strip().splitlines() or [f"exit {check.returncode}"])[-1]
+            else:
+                ready.add(instance)
+                log(f"{instance}  ready over SSH ({elapsed})")
+        if len(ready) == len(ids):
             break
+        if time.monotonic() - beat >= 30:
+            beat = time.monotonic()
+            for instance in ids:
+                if instance not in ips:
+                    log(f"{instance}  still {status[instance]} ({elapsed})")
+                elif instance not in ready:
+                    log(f"{instance}  still waiting for SSH: {error.get(instance, 'no answer yet')} ({elapsed})")
         if time.monotonic() > deadline:
-            raise TimeoutError(f"Instances not running: {ids}")
-        time.sleep(10)
-    ips = [instances[i].network_interfaces[0].primary_ip_address for i in ids]
-    for ip in ips:
-        # VPC addresses are reused; a previous worker's host key would fail StrictHostKeyChecking.
-        subprocess.run(["ssh-keygen", "-R", ip], capture_output=True)
-        while subprocess.run([*ssh, "-o", "ConnectTimeout=5", "-n", ip, "true"], capture_output=True).returncode:
-            if time.monotonic() > deadline:
-                raise TimeoutError(f"No SSH on {ip}")
-            time.sleep(5)
-    return ips
+            raise TimeoutError(f"Not ready after {timeout}s: {', '.join(i for i in ids if i not in ready)}")
+        time.sleep(5)
+    return [ips[i] for i in ids]
 
 
 def release(run: str) -> list[str]:
