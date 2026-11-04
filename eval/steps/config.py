@@ -9,8 +9,28 @@ from pathlib import Path
 from typing import Literal
 
 from plugins.hosts import Resources, SSHSettings
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, NonNegativeInt, PositiveInt, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    NonNegativeFloat,
+    NonNegativeInt,
+    PositiveInt,
+    model_validator,
+)
 from steps.workers import ECSSpec
+
+
+class Price(BaseModel):
+    """USD per million tokens, for model calls whose API reports no usage.cost (Fibona's FIBONA_PRICE)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    input: NonNegativeFloat
+    cached_input: NonNegativeFloat
+    cache_write: NonNegativeFloat
+    output: NonNegativeFloat
 
 
 class ModelSettings(BaseModel):
@@ -21,6 +41,7 @@ class ModelSettings(BaseModel):
     api_retries: NonNegativeInt | None = None
     context_tokens: PositiveInt | None = None
     extra_body: dict[str, JsonValue] | None = None
+    price: Price | None = None
 
     @model_validator(mode="after")
     def output_fits_context(self) -> "ModelSettings":

@@ -139,6 +139,7 @@ class Mind:
         *,
         lowest_reasoning_effort: str = "medium",
         reasoning_effort: str = "medium",
+        price: dict[str, float] | None = None,
     ):
         for effort in (lowest_reasoning_effort, reasoning_effort):
             if effort not in REASONING_EFFORTS:
@@ -154,6 +155,7 @@ class Mind:
         )
         self.lowest_reasoning_effort = lowest_reasoning_effort
         self.reasoning_effort = reasoning_effort
+        self.price = price  # USD per million tokens for responses that report no usage.cost; see _price.
 
     def wake(self, input=(), *, submit: Submit, logger=None, **body) -> Response:
         """Wake the mind. Exposed to cells as `call_me`.
@@ -236,6 +238,7 @@ class Mind:
                 raise
             outputs.extend(response.output)
             usage_incomplete = usage_incomplete or response.usage is None
+            _price(response.usage, self.price)
             usage = _add_usage(usage, response.usage)
             next_cell_call = _find_next_cell_call(response)
             if next_cell_call is None:
@@ -276,6 +279,7 @@ class Mind:
             log_info(logger, "model_error", **metadata, error={"type": type(exc).__name__, "message": str(exc)})
             raise
         if isinstance(response, Response):
+            _price(response.usage, self.price)
             log_info(logger, "model_response", **metadata, response=response)
         else:
             log_info(logger, "model_stream_created", **metadata)
@@ -294,10 +298,25 @@ def _add_usage(total, current):
     for key in type(details).model_fields:
         a, b = getattr(details, key, None), getattr(incoming, key, None)
         setattr(details, key, a + b if a is not None and b is not None else None)
-    if hasattr(total, "cost"):  # Actual provider cost still includes every round.
+    if hasattr(total, "cost"):  # Reported or priced cost still includes every round.
         a, b = total.cost, getattr(current, "cost", None)
         total.cost = a + b if a is not None and b is not None else None
     return total
+
+
+def _price(usage, price) -> None:
+    """Set usage.cost from `price` when the API reported none, pricing the round's tokens as a provider bills them."""
+    if usage is None or price is None or getattr(usage, "cost", None) is not None:
+        return
+    details = usage.input_tokens_details
+    cached = getattr(details, "cached_tokens", 0) or 0
+    written = getattr(details, "cache_write_tokens", 0) or 0
+    usage.cost = (
+        (usage.input_tokens - cached - written) * price["input"]
+        + cached * price["cached_input"]
+        + written * price["cache_write"]
+        + usage.output_tokens * price["output"]
+    ) / 1_000_000
 
 
 def _input_items(value) -> list:

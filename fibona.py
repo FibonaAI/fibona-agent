@@ -1,6 +1,7 @@
 """Run a built-in bootstrap or a Python file as Fibona's bootstrap cell."""
 
 import argparse
+import json
 import os
 import sys
 from functools import partial
@@ -59,6 +60,13 @@ def main() -> int:
     api_key = os.getenv("FIBONA_API_KEY")
     if not api_key:
         parser.error("Set FIBONA_API_KEY to your API key.")
+    price = None
+    if os.getenv("FIBONA_PRICE"):  # USD per million tokens, for responses that report no usage.cost.
+        try:
+            raw = json.loads(os.environ["FIBONA_PRICE"])
+            price = {key: float(raw[key]) for key in ("input", "cached_input", "cache_write", "output")}
+        except (ValueError, TypeError, KeyError):
+            parser.error("FIBONA_PRICE must be a JSON object with input, cached_input, cache_write and output.")
     try:
         with OpenAI(
             api_key=api_key,
@@ -73,6 +81,7 @@ def main() -> int:
                 INSTRUCTIONS,
                 lowest_reasoning_effort=args.lowest_reasoning_effort,
                 reasoning_effort=args.reasoning_effort,
+                price=price,
             )
             env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
             env.bind(argv=remaining_args)  # Arguments this launcher did not consume, for the bootstrap to read.

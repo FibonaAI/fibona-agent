@@ -28,7 +28,7 @@ See `local.example.yaml` (one machine) and `cluster.example.yaml` (ECS workers o
 | `dataset` / `model` | As `harbor run -d` / `-m` take them. |
 | `base_url` | Optional model API endpoint. |
 | `agent` | Optional Harbor agent name or importable `module:Class`; defaults to `plugins.agent:Fibona`. |
-| `model_settings` | Optional: `reasoning_effort`, `max_output_tokens`, `api_retries`, `context_tokens`, `extra_body` (JSON request extensions). |
+| `model_settings` | Optional: `reasoning_effort`, `max_output_tokens`, `api_retries`, `context_tokens`, `extra_body` (JSON request extensions), `price` (see Results). |
 | `registry` | Optional: task images are mirrored here before the run and pulled from here, local or cluster; every machine's Docker must be logged in to it. Without it, tasks pull from upstream. |
 | `local` | Single machine: run on this machine alone, in its Docker as the current user, within this budget (`cpus`, `memory_mb`, `gpus`). No SSH; replaces `settings` and `groups`. |
 | `settings` | Cluster jobs: SSH user, key and port. |
@@ -50,6 +50,10 @@ For adapters using the shared environment helper, explicit YAML values override 
 
 - Start with `meta.json` (run info, git, exit code) and `jobs/<run>/result.json` (Harbor results); per-trial logs
   are under `jobs/<run>/`.
+- A trial's cost sums `usage.cost` over its model responses. OpenRouter reports it (with BYOK, only its own fee);
+  the official OpenAI API and some third-party gateways do not, so their trials have no cost unless
+  `model_settings.price` gives USD per million tokens (`input`, `cached_input`, `cache_write`, `output`). Fibona
+  then prices each API round that reports no cost, replayed history included; the REPL agent ignores it.
 - Ctrl-C or `kill` still deletes the workers and archives the job. Only `SIGKILL` doesn't: then delete the
   instances tagged `fibona-job=<run>` in the ECS console.
 
