@@ -1,12 +1,50 @@
 """Read-only ATIF projection of the REPL agent's native session records."""
 
 import base64
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
 
 from harbor.models.trajectories import Trajectory
 from plugins.utils import _text
+
+
+def _trajectory_content(content, logs_dir: Path):
+    """Convert native text/image content to ATIF parts, materializing data URLs as artifacts."""
+    if not isinstance(content, list):
+        return _text(content)
+    parts = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type")
+        if kind in {"text", "input_text"} and part.get("text") is not None:
+            parts.append({"type": "text", "text": part["text"]})
+        elif kind == "input_image" and isinstance(part.get("image_url"), str):
+            url = part["image_url"]
+            mime = "image/png"
+            source = None
+            if url.startswith("data:image/"):
+                try:
+                    prefix, payload = url.split(";base64,", 1)
+                    mime = prefix.removeprefix("data:")
+                    suffix = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}[
+                        mime
+                    ]
+                    directory = logs_dir / "images"
+                    directory.mkdir(exist_ok=True)
+                    image_bytes = base64.b64decode(payload)
+                    path = directory / f"repl_image_{hashlib.sha256(image_bytes).hexdigest()}{suffix}"
+                    path.write_bytes(image_bytes)
+                    source = {"media_type": mime, "path": f"images/{path.name}"}
+                except (ValueError, KeyError, OSError):
+                    source = None
+            else:
+                source = {"media_type": mime, "path": url}
+            if source is not None:
+                parts.append({"type": "image", "source": source})
+    return parts or _text(content)
 
 
 def _arguments(raw):
@@ -78,7 +116,12 @@ def convert(logs_dir: Path, model_name: str | None = None) -> Trajectory | None:
             elif kind == "message":
                 message = record["message"]
                 role = message.get("role")
-                add(record, role if role in {"user", "system", "agent"} else "system", _text(message.get("content")))
+                source = "agent" if record.get("parent_cell_id") is not None else role
+                add(
+                    record,
+                    source if source in {"user", "system", "agent"} else "system",
+                    _trajectory_content(message.get("content"), logs_dir),
+                )
             elif kind == "model_request":
                 requests[record["id"]] = record
             elif kind == "model_response":
@@ -112,6 +155,9 @@ def convert(logs_dir: Path, model_name: str | None = None) -> Trajectory | None:
                 if reasoning:
                     step["reasoning_content"] = reasoning
                 usage = record.get("usage") if isinstance(record.get("usage"), dict) else {}
+                reasoning_tokens = (
+                    usage.get("output_tokens_details") if isinstance(usage.get("output_tokens_details"), dict) else {}
+                ).get("reasoning_tokens")
                 metrics = {
                     "prompt_tokens": usage.get("input_tokens"),
                     "completion_tokens": usage.get("output_tokens"),
@@ -119,6 +165,7 @@ def convert(logs_dir: Path, model_name: str | None = None) -> Trajectory | None:
                         usage.get("input_tokens_details") if isinstance(usage.get("input_tokens_details"), dict) else {}
                     ).get("cached_tokens"),
                     "cost_usd": usage.get("cost"),
+                    "extra": {"reasoning_tokens": reasoning_tokens} if reasoning_tokens is not None else None,
                 }
                 if any(value is not None for value in metrics.values()):
                     step["metrics"] = {key: value for key, value in metrics.items() if value is not None}

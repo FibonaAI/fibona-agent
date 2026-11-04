@@ -25,10 +25,17 @@ def batch_agent(source: str) -> str:
 
 def session_metrics(path: Path) -> dict:
     """Derive usage and logical-request latency from native records, without rewriting history."""
-    totals = {"n_input_tokens": 0, "n_cache_tokens": 0, "n_output_tokens": 0, "cost_usd": 0.0}
+    totals = {
+        "n_input_tokens": 0,
+        "n_cache_tokens": 0,
+        "n_output_tokens": 0,
+        "n_reasoning_tokens": 0,
+        "cost_usd": 0.0,
+    }
     missing = set()
     requests, outcomes = {}, set()
     errors, anomalies, latencies = 0, 0, []
+    seen_usage = False
     complete = path.is_file()
     if complete:
         with path.open("rb") as source:
@@ -64,11 +71,19 @@ def session_metrics(path: Path) -> dict:
                         errors += 1
                         missing.update(totals)
                         continue
-                    usage = record.get("usage") or {}
+                    usage = record.get("usage") if isinstance(record.get("usage"), dict) else None
+                    if record.get("status") == "failed" or record.get("error"):
+                        errors += 1
+                    if not usage and (record.get("status") != "completed" or record.get("accepted") is False):
+                        missing.update(totals)
+                        continue
+                    usage = usage or {}
+                    seen_usage = True
                     values = {
                         "n_input_tokens": usage.get("input_tokens"),
                         "n_cache_tokens": (usage.get("input_tokens_details") or {}).get("cached_tokens"),
                         "n_output_tokens": usage.get("output_tokens"),
+                        "n_reasoning_tokens": (usage.get("output_tokens_details") or {}).get("reasoning_tokens"),
                         "cost_usd": usage.get("cost"),
                     }
                     for key, value in values.items():
@@ -76,18 +91,18 @@ def session_metrics(path: Path) -> dict:
                             missing.add(key)
                         else:
                             totals[key] += value
-                    reasoning = (usage.get("output_tokens_details") or {}).get("reasoning_tokens")
+                    reasoning = values["n_reasoning_tokens"]
                     if (
                         reasoning is not None
-                        and usage.get("output_tokens") is not None
-                        and reasoning > usage["output_tokens"]
+                        and values["n_output_tokens"] is not None
+                        and reasoning > values["n_output_tokens"]
                     ):
                         anomalies += 1
     pending = len(requests.keys() - outcomes)
     complete = complete and not pending
     return {
         "totals": {
-            key: value if complete and requests and key not in missing else None for key, value in totals.items()
+            key: value if complete and seen_usage and key not in missing else None for key, value in totals.items()
         },
         "known_usage_subtotal": totals,
         "missing_usage_fields": sorted(missing),
@@ -163,8 +178,8 @@ class ReplAgent(BaseInstalledAgent):
 
     def populate_context_post_run(self, context) -> None:
         metrics = session_metrics(self.logs_dir / "session.jsonl")
-        for key, value in metrics["totals"].items():
-            setattr(context, key, value)
+        for key in ("n_input_tokens", "n_cache_tokens", "n_output_tokens", "cost_usd"):
+            setattr(context, key, metrics["totals"][key])
         context.metadata = {key: value for key, value in metrics.items() if key != "request_latencies"}
         (self.logs_dir / "metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
         try:
@@ -177,6 +192,9 @@ class ReplAgent(BaseInstalledAgent):
                     total_cached_tokens=totals["n_cache_tokens"],
                     total_cost_usd=totals["cost_usd"],
                     total_steps=len(trajectory.steps),
+                    extra={"reasoning_tokens": totals["n_reasoning_tokens"]}
+                    if totals["n_reasoning_tokens"] is not None
+                    else None,
                 )
                 (self.logs_dir / "trajectory.json").write_text(format_trajectory_json(trajectory.to_json_dict()))
         except Exception:
