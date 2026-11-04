@@ -1,6 +1,7 @@
 """Run the checkout's experimental Python agent through the standard eval job lifecycle."""
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -167,6 +168,10 @@ class ReplAgent(BaseInstalledAgent):
         task.write_text(instruction)
         await environment.upload_file(str(task), "/installed-agent/repl-agent-task.txt")
         env = self.model_settings.environment(self.model_name or "gpt-6-astra", self.base_url)
+        # The shared eval config uses FIBONA_*, while the standalone REPL uses OPENAI_*.
+        for name in ("API_KEY", "BASE_URL"):
+            if value := env.pop(f"FIBONA_{name}", None) or os.getenv(f"OPENAI_{name}"):
+                env[f"OPENAI_{name}"] = value
         env["FIBONA_SESSION"] = "/logs/agent/session.jsonl"
         await self.exec_as_agent(
             environment,
