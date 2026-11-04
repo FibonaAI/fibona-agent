@@ -1,7 +1,7 @@
 """Run one job end to end and archive it: the unit of evaluation is experiments/<run>/, run = <UTC time>-<name>.
 
 Usage: make job CONFIG=<config.yaml> (python job.py <config.yaml>); see example.yaml.
-Steps: record code → mirror images → launch ECS workers → sync → Harbor (with profiles) → delete workers
+Steps: record code → mirror images → launch ECS workers → Harbor (with profiles) → delete workers
 → upload the job to its archive. Workers are deleted even if the run fails or is stopped; only a SIGKILL
 leaves them, tagged fibona-job=<run> in ECS.
 """
@@ -9,7 +9,6 @@ leaves them, tagged fibona-job=<run> in ECS.
 import getpass
 import json
 import os
-import shlex
 import shutil
 import signal
 import socket
@@ -135,10 +134,6 @@ def main() -> int:
         ensure_images(config, job_dir / "images.json")
         resolved = config.model_copy(update={"groups": launch_workers(config, run, job_dir)})
         (job_dir / "config.resolved.yaml").write_text(yaml.safe_dump(resolved.model_dump(mode="json"), sort_keys=False))
-        # dist (our wheel, its dependency wheels, uv) and python go to /opt/fibona, which Harbor mounts.
-        for host in resolved.hosts:
-            ssh = shlex.join(resolved.ssh(host))
-            subprocess.run(["rsync", "-a", "--delete", "-e", ssh, "dist", "python", f"{host}:/opt/fibona/"], check=True)
         threading.Thread(target=profiles.every_five_minutes, args=(resolved, job_dir, stop), daemon=True).start()
         exit_code = run_harbor(resolved, job_dir)
     except BaseException as error:
