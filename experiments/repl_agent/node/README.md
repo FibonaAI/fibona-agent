@@ -16,6 +16,10 @@ Lexical declarations, reassignable variables and module exports behave different
 
 ## Tools and storage
 
-The initial catalog lists `display`, `input`, `sleep` and `cell_signal`. Only `run_cell` is exposed to the model API. Its recorded result automatically supplies output, error, status, elapsed seconds and declared timeout to the model; return values of other callables require explicit logging or display. See [cell execution timing](../docs/agent/execution.md#cell-deadlines) for measurement boundaries and unknown historical durations.
+The initial catalog lists `view_image`, `display`, `input`, `sleep` and `cell_signal`. Only `run_cell` is exposed to the model API. Its recorded result automatically supplies output, error, status, elapsed seconds and declared timeout to the model; return values of other callables require explicit logging or display. See [cell execution timing](../docs/agent/execution.md#cell-deadlines) for measurement boundaries and unknown historical durations.
+
+`view_image` accepts paths, buffers and image URLs. It records an image observation for subsequent model requests; for example, `view_image("chart.png", null, { detail: "high" })`. The provider handles decoding and resizing. Data URLs longer than the Responses API's 20,971,520-character limit are rejected.
+
+Before measured usage is available, the default GPT-6 Astra estimator reserves 308 tokens per `low` image, 3,000 for `high`, and 36,000 for `auto`/`original` (including omitted detail), based on the [provider's image limits](https://developers.openai.com/api/docs/guides/images-vision). These are conservative budgets, not exact counts. Later estimates use measured input/output usage plus new observations and prompt/tool growth. Base64 and encrypted reasoning are excluded from text-length estimates. Adjust this policy when changing models.
 
 Sessions use single-writer versioned JSONL. The loader validates the header, record identities, associations and complete records, and rejects incompatible formats and interior corruption without overwriting them. Only an unparsable unfinished final fragment after a valid prefix is discarded; a valid final record lacking a newline is preserved. `session.records` holds the stored facts themselves, so treat it as read-only; projected model input is a separate copy.

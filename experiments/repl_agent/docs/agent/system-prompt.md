@@ -4,47 +4,38 @@ Part of the [agent design](README.md). The prompt gives purpose, working princip
 
 ## Organization
 
-The prompt separates eight concerns, allowing the agent to inspect and revise one aspect of its guidance without losing the others:
+The prompt is organized into five top-level sections, allowing the agent to inspect and revise one aspect of its guidance without losing the others:
 
 | Section | Guidance |
 | --- | --- |
-| Identity | The agent's purpose and intent to improve its ways of working |
-| Working | Advance the task through evidence, action and verification |
-| Environment | Understand the agent's composition, shared runtime and capacity for self-modification |
-| run_cell | Write code, manage execution and resources, and choose output audiences |
-| Session | Retrieve evidence and distinguish historical facts from current state |
-| Context | Actively maintain model input, task state and continuity |
-| Tool | Discover, use and maintain tools through the catalog |
-| Reflection | Investigate discrepancies and evaluate changes to approach or environment |
+| Identity | The agent's identity and capacity to understand, modify and evolve itself in real time |
+| Work | Understand the user's task and goals and complete them autonomously |
+| Environment | Shared persistent REPL, core components (`instructions`, `session`, `context`, `run_cell`) and persistent task state and tool discovery (`task_state`, `tool_catalog`) |
+| Self-iteration | Compare expectations with actual outcomes, reflect proactively, expand tools and capabilities, and validate replacements with rollback safety |
+| Recovery mode | Shared REPL and basic capabilities with an independent context aimed at restoring normal-mode operation |
 
-Sections express durable concepts and judgment principles rather than a growing checklist of past failures. Keep concrete execution conventions in tool interfaces and callable documentation, with discovery paths from the prompt.
+Sections remain concise and express durable concepts rather than a growing checklist of past failures. Concrete signatures and execution details stay in tool interfaces and callable documentation, with discovery paths from the prompt.
 
 Each request uses the current guidance. Edits affect future requests, not those already sent. Recovery adds a repair instruction to its own input rather than replacing the agent with another persona.
 
-## Working and reflection
+## Environment and component subsections
 
-Teach the agent to establish goals, constraints and completion evidence; work independently while useful progress is possible; and distinguish assumptions, attempts and verified outcomes. Unexpected results should stop dependent work and trigger inspection rather than blind repetition.
+The `Environment` section gives the agent a direct map of its live runtime: the agent and `run_cell` share the same persistent REPL, where variables and functions survive across cells and context resets, and where the agent can inspect and redefine its own code. It groups the key components defined in the REPL:
 
-Choose actions that advance the user’s goal or resolve uncertainty that blocks progress, and carry the task through to completion. Keep the original acceptance criteria and artifact constraints explicit; proxy measurements help diagnose progress without replacing them. Use checks that can expose different failures and challenge assumptions shared by an implementation and its tests. Verify actual deliverables rather than treating a completed procedure as success. Preserve useful progress and report unresolved uncertainty.
+- `instructions`: the structured prompt sections passed to the model, editable for iteration.
+- `session`: append-only, persisted historical facts covering messages, executed code, output and errors across contexts.
+- `context`: organization and budget management of the model input window, with explicit handoff compaction and a reminder near the window limit; compaction only changes model input, not the REPL environment.
+- `run_cell`: the sole model-facing tool for executing code in the REPL with recording and timeout handling. Guidance highlights managing variables to avoid unbounded memory growth, combining multiple steps in one cell and sharing data across cells for efficiency, distinguishing model-captured `print` output from user-facing output, and separating agent dependencies from the task's working environment.
+- Other REPL variables and functions:
+  - `task_state`: an initially empty container for task notes and state, outside automatic context projection.
+  - `tool_catalog`: an index of function names and purpose descriptions, outside automatic context projection. Built-in tools can be looked up and used first; they are also defined in the REPL and can be modified and improved. The agent can update the catalog with reusable functions and tools to expand and improve its capabilities.
 
-Use observed execution time, expected scale and repetition to judge cost. Before repeating expensive work, identify what changed or what variability the repetition measures; reuse unchanged deterministic results and stable reference measurements when appropriate. If experiments stop producing useful evidence, preserve progress and reconsider the hypothesis, method and remaining budget. Reuse retained data and helpers, and group related observations when their results can be interpreted together. These are judgment principles, not fixed time thresholds, mandatory task-state fields or a limit on necessary verification.
+Concrete local tools are discovered through the catalog rather than listed individually in the prompt. The catalog and task notes remain editable live state and do not automatically enter context.
 
-Reflection can change understanding, plans, tools, state organization, context, prompt or the work loop. When testing an uncertain improvement, choose an experiment that can test the hypothesis and limit its effects. Adding a permanent rule is not the default response to one incident. Preserve conditions and evidence for lessons, apply them, and evaluate whether they help.
+Implementations share the same section structure and component guidance; runtime names and container descriptions follow the implementation language.
 
-## Environment and component sections
+## Self-iteration and recovery guidance
 
-Environment gives the agent a model of itself: the complete agent is first-cell code whose instructions, model access, execution wrappers, tools, session, context policy and work loop share a live namespace and process with task code. It keeps concrete discovery pointers to the first-cell source, `instructions` and `request_model`, and explains why a changed binding affects future lookups but not active calls or retained references.
+`Self-iteration` directs the agent to compare expectations with actual outcomes, analyze historical behavior, expand capabilities and tools, and iterate on itself safely. Because redefinitions in the REPL take effect immediately for dynamic lookups while active calls and saved references keep their existing bindings, replacements should be validated and tested first, using `try` inside a cell to catch exceptions and roll back when needed; see [self-modification](README.md#self-modification-and-dependency-stability).
 
-The environment guidance distinguishes agent runtime dependencies from the task’s execution environment before installations or import checks. The run_cell guidance encourages representative small runs to estimate expensive work, supervised execution where available for work that may block the shared runtime, and inspection of effects plus a revised scale, method or execution boundary after timeout. Concrete capability names and supported platform boundaries stay in the catalog and callable documentation.
-
-The run_cell, Session, Context and Tool sections each give judgment guidance for one component. Signatures and execution details stay in the callable documentation they point to. Two distinctions must survive edits: context reset differs from process restart, and failure or rollback does not undo external effects. Reflection owns how self-modification is judged; the rules for changing capabilities needed to keep running are in [self-modification](README.md#self-modification-and-dependency-stability).
-
-Implementations share the general guidance and section order; only language and runtime differences need distinct wording.
-
-## Guidance in the live environment
-
-Prompt sections carry durable working principles. From the discovery pointers, the agent can inspect the code that provides its capabilities and learn how to use them. Changing task progress stays in working state and history, so it does not become permanent instruction.
-
-Instructions guide use of execution boundaries, recording and context policy; code must implement those mechanisms. When changing guidance, inspect the composed prompt for contradictions, preserve the old version and verify the next real request path. Remove obsolete guidance rather than accumulating patches.
-
-The run_cell section states when to return an ordinary final reply without tool calls: after the checked final result, or in recovery once normal work can resume ([end of a turn](execution.md#end-of-a-turn)). Process exit is never normal completion.
+`Recovery mode` explains what happens when a failure prevents normal mode from continuing: recovery runs in the same REPL and shares foundational capabilities such as `instructions`, `run_cell` and `session`, but uses an independent context whose goal is to restore normal-mode operation.

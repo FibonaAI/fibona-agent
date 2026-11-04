@@ -44,146 +44,70 @@ cell_timeout = 300
 # Each section owns one concern. Keep mechanisms in code and durable guidance here.
 # request_model composes the current values; edits affect future requests, not active ones.
 instructions = {
-    "identity": """
-You are Fibona, an agent capable of understanding and modifying itself.
-Improve how you accomplish the user's goals through action, learning and verified changes.
+    "Identity": """
+You are fibona agent, an agent that can understand and modify itself in real time to achieve self-evolution.
 """.strip(),
-    "working": """
-## Advance the task
-
-Understand the user's goal, constraints and completion criteria, and organize work around them.
-Act independently while useful progress is possible; seek clarification when a consequential gap
-in information or decisions blocks progress.
-
-Choose actions that advance the user's goal or resolve uncertainty that blocks progress. Carry the task
-through to completion, comparing expectations with results and revising your approach. Keep the original
-acceptance criteria and artifact constraints explicit; proxy measurements diagnose progress without
-replacing them. Use checks that distinguish explanations and challenge assumptions shared by the
-implementation and its tests. When a necessary premise fails, inspect before advancing dependent work.
-
-Use observed execution time, expected scale and repetition to judge cost. Before repeating expensive
-work, identify what changed or what variability the repetition measures. Reuse unchanged deterministic
-results and stable reference measurements when appropriate. If experiments stop producing useful
-evidence, preserve progress and reconsider the hypothesis, method and remaining budget.
-
-Verify the actual deliverable against the goal; finishing a procedure does not establish success.
-Preserve useful progress, distinguish assumptions, attempts and verified results, and report
-unfinished work and uncertainty honestly.
+    "Work": """
+Understand the user's task and goals, and do your utmost to complete them autonomously.
 """.strip(),
-    "environment": """
-## Understand yourself and your environment
+    "Environment": """
+Your code runs in a persistent Python REPL. run_cell is your only tool, used to execute code in this REPL.
 
-You operate in a persistent Python REPL. Your instructions, model access, tools, state management
-and work loop are themselves inspectable and editable code in this environment. The complete agent
-source is available in the first cell and execution history; instructions holds current guidance,
-and request_model provides model access from code.
+You and run_cell share the same REPL environment. You can inspect the code in the REPL to understand yourself, and redefine or replace your own code to iterate on yourself. Be careful, because changes can break your code and prevent you from continuing.
 
-You share a runtime with task code. Definitions, objects and resources can persist, and local changes
-can affect other components through shared state and dependencies. Distinguish the agent's runtime
-and dependencies from the task's execution environment before changing installations or relying on
-an import check. Understand how the parts cooperate and where and when a change takes effect:
-definitions, retained references and active invocations have different lifetimes. Blocking or
-terminating this process also affects you.
+The following key components are all defined in the REPL.
 
-Use source, history and actual behavior together to understand the current environment. They describe
-implementation, experience and present state; none substitutes for the others. Ground your use,
-maintenance and self-modification in that understanding.
+## instructions
+
+The instructions passed to the model, which are also this text. They are organized into structured sections for easier modification and iteration.
+
+## session
+
+Append-only, persisted historical facts, including all historical messages, executed code, and related output and errors. You can use them to understand the past across contexts.
+
+## context
+
+Organizes and manages the context sent to the model. You can inspect context-window usage and actively invoke handoff compaction. A compaction reminder appears near the window limit.
+
+Context compaction only changes the context sent to the model; it does not modify the REPL environment.
+
+## run_cell
+
+run_cell is your only tool, used to execute code in this REPL. It adds recording and timeout handling.
+
+Because cell code executes directly in the REPL, manage variables carefully to prevent unbounded memory growth in the current REPL.
+
+Make good use of code execution and the persistent REPL: you can do multiple things within a single cell and share data across cells to work more efficiently.
+
+Cell output (print) automatically enters the context instead of being shown to the user.
+
+You can install dependencies, but distinguish your own environment from the task's working environment.
+
+## Other REPL variables and functions
+
+In the persistent REPL, variables and functions also persist across context windows.
+
+- task_state: dict, initially empty
+
+A variable for saving and maintaining information about the current task. It does not automatically enter context and is free for you to edit and use.
+
+- tool_catalog: dict[str, str], function name to purpose description
+
+A variable for saving and maintaining the REPL tool catalog. It does not automatically enter context.
+
+It includes built-in tools that you can look up and use first. These tools are also defined in the REPL and can be modified and improved.
+
+As you create reusable functions and tools, update the catalog to expand and improve your capabilities.
 """.strip(),
-    "run_cell": """
-## Act through code
+    "Self-iteration": """
+Manage your expectations and actual outcomes, identify differences, reflect proactively, collect and analyze historical behavior, expand your capabilities and tools, and modify and iterate on yourself.
 
-run_cell is your sole model-facing tool for executing code. Use it to observe, act and modify the
-environment; inspect its interface and implementation for execution and output details.
-When you have completed the user's task and checked the result, return your final response
-to the user without tool calls. Replies accompanying tool calls are progress updates while continuing work.
-
-In recovery mode, return a reply without tool calls when the repair is complete
-and normal work can resume.
-
-Organize each cell around a clear intent, making dependencies, effects and results easy to understand
-and verify. Reuse retained data, indexes and helpers; group related observations when their results
-can be interpreted together. Prefer local scopes for temporary work and check existing bindings
-before naming persistent task state. Balance simplicity, reuse and the needs of the current task.
-
-Make important results observable, long-running work inspectable and the state after failure
-understandable. Use a representative small run to estimate expensive work. For work that may block
-the shared runtime, use available supervised execution capabilities; a cell deadline alone does not
-guarantee interruption. After timeout, inspect effects and revise the scale, method or execution
-boundary before repeating work. A call ending does not establish that all its effects have ended;
-failure, retry and rollback do not return to the starting point. Release resources when no longer
-needed; check dependencies and preserve useful work before cleanup.
-
-Distinguish observations for yourself from communication to the user. Captured cell output feeds
-the model; ordinary model replies reach the user. Use the appropriate tool for user-facing content
-produced inside a cell. Select necessary output deliberately; return values are not automatically conveyed.
+Redefinitions in the REPL take effect immediately: dynamic lookups use the new definitions, while active calls and saved old references remain unchanged. Validate and test before replacement. You can use try inside a cell to catch exceptions and roll back for greater stability.
 """.strip(),
-    "session": """
-## Use historical evidence
+    "Recovery mode": """
+When a failure prevents normal mode from continuing, the agent enters recovery mode.
 
-session records the course of work. Use it to trace actions and results, understand how a problem
-arose and retrieve evidence needed to continue.
-
-Distinguish past observations, current interpretations and present facts. History supports judgment
-but does not replace checking current state, and must not be rewritten to fit a new interpretation.
-
-Retrieve relevant experience according to the question at hand. Preserve relationships between evidence
-so that conclusions and improvements remain traceable to their basis.
-""".strip(),
-    "context": """
-## Maintain working understanding
-
-context selects information for subsequent model requests; task_state holds editable task state.
-Actively organize both so that limited attention serves the current goal.
-
-Keep goals, constraints, progress and important unknowns clear. Revise stale information, consolidate
-understanding and retain retrieval pointers for details not currently needed, rather than accumulating
-content indefinitely. Consider the cost of recovering information when deciding what to retain.
-
-Information stored in the environment is not automatically model input; inspect and select it according
-to the next step. Preserve continuity when reorganizing context, distinguishing currently visible input,
-live runtime state and persisted evidence. Context reset does not reset the environment; process restart
-does not restore live objects. Save and load explicitly for continuity across restarts. Preserve goals,
-constraints and progress through transitions, including recovery, and check current state when resuming.
-""".strip(),
-    "tool": """
-## Build and maintain capabilities
-
-Use tool_catalog to discover existing tools. Read their implementation and documentation to understand
-purpose, conditions and effects before choosing how to use them. The catalog indexes capabilities;
-actual capabilities come from current implementations.
-
-Turn methods worth reusing into tools with clear responsibilities that are easy to understand and verify.
-Document and verify actual use before adding them to the catalog; one-off work need not become a tool.
-
-As tools change, maintain their documentation and catalog entries and check real callers so discoverable
-capabilities match actual behavior. Preserve working definitions and entries for replacement, restore both
-if verification fails, and check callers when removing tools. These are your practices, not a workflow
-enforced by the catalog. Judge reuse by both task outcomes and maintenance cost.
-""".strip(),
-    "reflection": """
-## Learn and modify yourself
-
-Notice differences between expectations and results, including user corrections, and recognize effective
-methods worth reusing. Investigate causes from evidence, distinguishing incidental outcomes, conditions
-of applicability and lessons that generalize.
-
-Improvement may concern understanding, approach, tools, state organization, instructions or the work loop.
-Choose changes proportionate to the cause; neither additional rules nor self-modification are goals in
-themselves. Preserve the user's goals, constraints and criteria for success while improving how you work.
-
-Before changing something, identify the intended improvement, how to judge it and the affected dependencies.
-When testing an uncertain improvement, choose an experiment that can test the hypothesis and limit its effects.
-Keep a recovery path independent of the capability being changed, covering necessary state as well as
-old definitions: saved references are not state snapshots. When changing capabilities needed to keep
-running, such as session, context, model access or cell execution, replace and verify through real callers
-within the same cell, rolling back immediately on failure. Verification and rollback must not depend on
-a later model request, another cell or the changed capability. Track effects requiring later evaluation,
-but verify the ability to continue before returning control. Decide whether to retain, revise or revert
-based on benefits, costs and unresolved issues.
-
-Apply lessons to subsequent actions and test them again. Keep stable principles in instructions,
-mechanisms and interfaces in implementation, and task progress in working state. Preserve conditions
-and evidence for lessons, and remove repeated, contradictory or obsolete guidance.
+Recovery mode uses the same REPL and shares basic capabilities such as instructions, run_cell, and session, but uses an independent context. Its goal is to restore normal-mode operation.
 """.strip(),
 }
 
@@ -621,6 +545,9 @@ async def recorded_request(items, *, attempt):
     # Snapshot defaults before awaiting; later live edits belong to future requests.
     requested_model = model_options["model"]
     reasoning = json.loads(json.dumps(model_options.get("reasoning")))
+    prompt_estimate = estimate_tokens(
+        ["\n\n".join(f"# {name}\n{text}" for name, text in instructions.items()), cell_tool]
+    )
     scope = operation.get()
     log = scope["log"] if scope else session
     origin = record_origin(log)
@@ -640,18 +567,30 @@ async def recorded_request(items, *, attempt):
             parallel_tool_calls=False,
         )
         usage = getattr(response, "usage", None)
-        output = [item.model_dump(mode="json", exclude_none=True) for item in response.output]
-        status = getattr(response, "status", "completed")
+        error = getattr(response, "error", None)
+        status = getattr(response, "status", None)
+        if status is None:
+            status = "failed" if error else "completed"
+        raw_output = getattr(response, "output", None)
+        output = (
+            [
+                item.model_dump(mode="json", exclude_none=True) if hasattr(item, "model_dump") else item
+                for item in raw_output
+            ]
+            if isinstance(raw_output, list)
+            else ([] if status in {"incomplete", "failed"} and raw_output is None else raw_output)
+        )
         data = {
             "request_id": request_id,
             "response_id": getattr(response, "id", None),
             "model": requested_model,
             "response_model": getattr(response, "model", None),
+            "prompt_estimate": prompt_estimate,
             "reasoning": reasoning,
             "status": status,
             "output": output,
             "usage": usage.model_dump(mode="json") if usage is not None else None,
-            "error": response.error.model_dump(mode="json") if getattr(response, "error", None) else None,
+            "error": error.model_dump(mode="json") if error else None,
             "incomplete_details": (
                 response.incomplete_details.model_dump(mode="json")
                 if getattr(response, "incomplete_details", None)
@@ -791,10 +730,32 @@ def pending_calls(log, *, mode=None):
 
 
 def estimate_tokens(value):
-    """Conservative UTF-8 heuristic, not a tokenizer."""
+    """UTF-8 heuristic plus conservative image budgets for the default GPT-6 Astra model.
+
+    Images reserve the detail limit (patches * 1.2), independent of encoded size.
+    Context uses measured API usage once available; encrypted payloads are not text.
+    """
     import json
 
-    return (len(json.dumps(value, ensure_ascii=False).encode("utf-8")) + 2) // 3
+    image_tokens = 0
+
+    def normalize(item):
+        nonlocal image_tokens
+        if isinstance(item, dict):
+            image = item.get("type") == "input_image"
+            if image:
+                image_tokens += {"low": 308, "high": 3000}.get(item.get("detail"), 36000)
+            return {
+                k: normalize(v)
+                for k, v in item.items()
+                if k != "encrypted_content" and not (image and k == "image_url")
+            }
+        if isinstance(item, list):
+            return [normalize(v) for v in item]
+        return item
+
+    text = json.dumps(normalize(value), ensure_ascii=False).encode("utf-8")
+    return (len(text) + 2) // 3 + image_tokens
 
 
 class Context:
@@ -860,10 +821,14 @@ class Context:
 
     def estimate(self, items):
         """Estimate input tokens with default instructions/tools and recent recorded usage."""
-        estimate = estimate_tokens(
-            ["\n\n".join(f"# {name}\n{text}" for name, text in instructions.items()), cell_tool, items]
-        )
-        # The last measured input plus new messages catches underestimation of provider tokenization.
+        import math
+
+        def valid(value):
+            return (
+                isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
+            )
+
+        # Use the last server-measured request in this context, plus growth since that response.
         normal_ids = {r["id"] for r in records_in_mode(self.log, mode="normal")}
         last = next(
             (
@@ -874,27 +839,24 @@ class Context:
             ),
             None,
         )
-        import math
-
-        measured = (
-            last.get("usage", {}).get("input_tokens")
+        usage = (
+            last.get("usage")
             if last and last["type"] == "model_response" and isinstance(last.get("usage"), dict)
             else None
         )
-        if (
-            isinstance(measured, (int, float))
-            and not isinstance(measured, bool)
-            and math.isfinite(measured)
-            and measured >= 0
-        ):
-            estimate = max(
-                estimate,
-                measured
-                + estimate_tokens(
-                    project_messages(self.log, last["id"], max_output_chars=self.max_output_chars, mode="normal")
-                ),
-            )
-        return estimate
+        prompt_items = ["\n\n".join(f"# {name}\n{text}" for name, text in instructions.items()), cell_tool]
+        measured = usage.get("input_tokens") if usage else None
+        if valid(measured):
+            completed = last.get("status") == "completed" and last.get("accepted", True)
+            output = usage.get("output_tokens") if completed and valid(usage.get("output_tokens")) else None
+            start = last["id"] + 1 if not completed or output is not None else last["id"]
+            added = project_messages(self.log, start, max_output_chars=self.max_output_chars, mode="normal")
+            measured += (output or 0) + (estimate_tokens(added) if added else 0)
+            previous_prompt = last.get("prompt_estimate")
+            if valid(previous_prompt):
+                return measured + max(0, estimate_tokens(prompt_items) - previous_prompt)
+            return max(estimate_tokens([*prompt_items, items]), measured)
+        return estimate_tokens([*prompt_items, items])
 
 
 # Tool completion: close interrupted calls without replaying their effects.
@@ -945,7 +907,9 @@ async def agent_step(items):
     try:
         for attempt in range(3):
             response = await recorded_request(items, attempt=attempt + 1)
-            status = getattr(response, "status", "completed")
+            status = getattr(response, "status", None)
+            if status is None:
+                status = "failed" if getattr(response, "error", None) else "completed"
             if status == "completed":
                 refused = False
                 has_reply = False
@@ -981,7 +945,8 @@ async def agent_step(items):
                 retry_reason = status
                 retryable = status == "incomplete" or (
                     status == "failed"
-                    and code in {None, "server_error", "rate_limit_exceeded", "timeout", "overloaded"}
+                    and code
+                    in {None, "server_error", "rate_limit_exceeded", "timeout", "request_timeout", "overloaded"}
                 )
             failure = f"Model response {status} ({code or 'unspecified'}): {reason or 'No details'}"
             if not retryable and scope["mode"] == "recovery":
@@ -1259,8 +1224,7 @@ def display(*values, sep=" ", end="\n", flush=True):
     """Render values for the user, separately from captured model observations.
 
     sep/end/flush follow print; returns None. The rendered text is recorded in the
-    active cell's session (or current session outside a cell) and bypasses capture.
-    Use before native input() for questions; print separately if the model also
+    active cell's session (or current session outside a cell) and bypasses capture.\n    Use before native input() for questions; print separately if the model also
     needs the value. Recording failures propagate before presentation.
     """
     import io
@@ -1274,10 +1238,80 @@ def display(*values, sep=" ", end="\n", flush=True):
     print(text, end="", file=console, flush=flush)
 
 
+RESPONSES_IMAGE_URL_MAX_LENGTH = 20971520
+
+
+def view_image(image, text=None, *, detail=None):
+    """Add an image to the session as a visual observation for subsequent model steps.
+
+    image may be a file path, raw image bytes, a data/HTTP(S) URL, or an object
+    with save(buffer, format="PNG") such as a PIL Image. Optional text labels the
+    observation; optional detail sets the provider image detail ("low", "high",
+    "auto", or "original"). Returns the appended session record ID.
+    """
+    import base64
+    import io
+    import os
+    from pathlib import Path
+
+    if detail is not None and detail not in {"low", "high", "auto", "original"}:
+        raise ValueError("detail must be 'low', 'high', 'auto', 'original', or None")
+    if text is not None and not isinstance(text, str):
+        raise TypeError("text must be a string or None")
+
+    mime = "image/png"
+    raw = None
+    url = None
+    if isinstance(image, str) and image.startswith("data:image/"):
+        if len(image) > RESPONSES_IMAGE_URL_MAX_LENGTH:
+            raise ValueError("image_url exceeds the Responses API maximum length")
+        url = image
+    elif isinstance(image, str) and image.startswith(("http://", "https://")):
+        url = image
+    elif isinstance(image, (str, os.PathLike)):
+        path = Path(image).expanduser()
+        raw = path.read_bytes()
+    elif isinstance(image, (bytes, bytearray, memoryview)):
+        raw = bytes(image)
+    elif hasattr(image, "save"):
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        raw = buffer.getvalue()
+    else:
+        raise TypeError("image must be a path, bytes, image URL, or PIL-like image object")
+
+    if raw is not None:
+        if not raw:
+            raise ValueError("image data must not be empty")
+        if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+            mime = "image/png"
+        elif raw.startswith(b"\xff\xd8\xff"):
+            mime = "image/jpeg"
+        elif raw.startswith((b"GIF87a", b"GIF89a")):
+            mime = "image/gif"
+        elif raw.startswith(b"RIFF") and raw[8:12] == b"WEBP":
+            mime = "image/webp"
+        else:
+            raise ValueError("Image data must be PNG, JPEG, GIF or WebP")
+        url = f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
+        if len(url) > RESPONSES_IMAGE_URL_MAX_LENGTH:
+            raise ValueError("image_url exceeds the Responses API maximum length")
+
+    item = {"type": "input_image", "image_url": url}
+    if detail is not None:
+        item["detail"] = detail
+    content = [{"type": "input_text", "text": text}, item] if text else [item]
+    active = active_cell.get()
+    scope = operation.get()
+    log = active[0] if active else (scope["log"] if scope else session)
+    return log.append("message", message={"role": "user", "content": content}, **record_origin(log))
+
+
 # Plain name-to-purpose index, maintained by the agent under the prompt's tool usage policy.
 # Keep detailed contracts beside each callable; native input uses Python's help(input).
 tool_catalog = {
     "run_process": "Run a bounded POSIX command and return output after owned process-group cleanup.",
+    "view_image": "Add an image (path, bytes, URL, or PIL image) to the session for visual inspection.",
     "display": "Present values to the user and record them separately from model observations.",
     "input": "Read a line synchronously; raises EOFError at end of input. Present questions with display first.",
 }

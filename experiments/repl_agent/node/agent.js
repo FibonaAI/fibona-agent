@@ -25,131 +25,61 @@ var cell_timeout = 300;
 
 // Named sections are composed for every request; edits affect future requests.
 var instructions = {
-  identity: `You are Fibona, an agent capable of understanding and modifying itself.
-Improve how you accomplish the user's goals through action, learning and verified changes.`,
-  working: `## Advance the task
+  Identity: "You are fibona agent, an agent that can understand and modify itself in real time to achieve self-evolution.",
+  Work: "Understand the user's task and goals, and do your utmost to complete them autonomously.",
+  Environment: `Your code runs in a persistent Node.js REPL. run_cell is your only tool, used to execute code in this REPL.
 
-Understand the user's goal, constraints and completion criteria, and organize work around them.
-Act independently while useful progress is possible; seek clarification when a consequential gap
-in information or decisions blocks progress.
+You and run_cell share the same REPL environment. You can inspect the code in the REPL to understand yourself, and redefine or replace your own code to iterate on yourself. Be careful, because changes can break your code and prevent you from continuing.
 
-Choose actions that advance the user's goal or resolve uncertainty that blocks progress. Carry the task
-through to completion, comparing expectations with results and revising your approach. Keep the original
-acceptance criteria and artifact constraints explicit; proxy measurements diagnose progress without
-replacing them. Use checks that distinguish explanations and challenge assumptions shared by the
-implementation and its tests. When a necessary premise fails, inspect before advancing dependent work.
+The following key components are all defined in the REPL.
 
-Use observed execution time, expected scale and repetition to judge cost. Before repeating expensive
-work, identify what changed or what variability the repetition measures. Reuse unchanged deterministic
-results and stable reference measurements when appropriate. If experiments stop producing useful
-evidence, preserve progress and reconsider the hypothesis, method and remaining budget.
+## instructions
 
-Verify the actual deliverable against the goal; finishing a procedure does not establish success.
-Preserve useful progress, distinguish assumptions, attempts and verified results, and report
-unfinished work and uncertainty honestly.`,
-  environment: `## Understand yourself and your environment
+The instructions passed to the model, which are also this text. They are organized into structured sections for easier modification and iteration.
 
-You operate in a persistent Node.js REPL. Your instructions, model access, tools, state management
-and work loop are themselves inspectable and editable code in this environment. The complete agent
-source is available in the first cell and execution history; instructions holds current guidance,
-and request_model provides model access from code.
+## session
 
-You share a runtime with task code. Definitions, objects and resources can persist, and local changes
-can affect other components through shared state and dependencies. Distinguish the agent's runtime
-and dependencies from the task's execution environment before changing installations or relying on
-an import check. Understand how the parts cooperate and where and when a change takes effect:
-definitions, retained references and active invocations have different lifetimes. Blocking or
-terminating this process also affects you.
+Append-only, persisted historical facts, including all historical messages, executed code, and related output and errors. You can use them to understand the past across contexts.
 
-Use source, history and actual behavior together to understand the current environment. They describe
-implementation, experience and present state; none substitutes for the others. Ground your use,
-maintenance and self-modification in that understanding.`,
-  run_cell: `## Act through code
+## context
 
-run_cell is your sole model-facing tool for executing code. Use it to observe, act and modify the
-environment; inspect its interface and implementation for execution and output details.
-When you have completed the user's task and checked the result, return your final response
-to the user without tool calls. Replies accompanying tool calls are progress updates while continuing work.
+Organizes and manages the context sent to the model. You can inspect context-window usage and actively invoke handoff compaction. A compaction reminder appears near the window limit.
 
-In recovery mode, return a reply without tool calls when the repair is complete
-and normal work can resume.
+Context compaction only changes the context sent to the model; it does not modify the REPL environment.
 
-Organize each cell around a clear intent, making dependencies, effects and results easy to understand
-and verify. Reuse retained data, indexes and helpers; group related observations when their results
-can be interpreted together. Prefer local scopes for temporary work and check existing bindings
-before naming persistent task state. Balance simplicity, reuse and the needs of the current task.
+## run_cell
 
-Make important results observable, long-running work inspectable and the state after failure
-understandable. Use a representative small run to estimate expensive work. For work that may block
-the shared runtime, use available supervised execution capabilities; a cell deadline alone does not
-guarantee interruption. After timeout, inspect effects and revise the scale, method or execution
-boundary before repeating work. A call ending does not establish that all its effects have ended;
-failure, retry and rollback do not return to the starting point. Release resources when no longer
-needed; check dependencies and preserve useful work before cleanup.
+run_cell is your only tool, used to execute code in this REPL. It adds recording and timeout handling.
 
-Distinguish observations for yourself from communication to the user. Captured cell output feeds
-the model; ordinary model replies reach the user. Use the appropriate tool for user-facing content
-produced inside a cell. Select necessary output deliberately; return values are not automatically conveyed.`,
-  session: `## Use historical evidence
+Because cell code executes directly in the REPL, manage variables carefully to prevent unbounded memory growth in the current REPL.
 
-session records the course of work. Use it to trace actions and results, understand how a problem
-arose and retrieve evidence needed to continue.
+Make good use of code execution and the persistent REPL: you can do multiple things within a single cell and share data across cells to work more efficiently.
 
-Distinguish past observations, current interpretations and present facts. History supports judgment
-but does not replace checking current state, and must not be rewritten to fit a new interpretation.
+Cell output (console.log) automatically enters the context instead of being shown to the user.
 
-Retrieve relevant experience according to the question at hand. Preserve relationships between evidence
-so that conclusions and improvements remain traceable to their basis.`,
-  context: `## Maintain working understanding
+You can install dependencies, but distinguish your own environment from the task's working environment.
 
-context selects information for subsequent model requests; task_state holds editable task state.
-Actively organize both so that limited attention serves the current goal.
+## Other REPL variables and functions
 
-Keep goals, constraints, progress and important unknowns clear. Revise stale information, consolidate
-understanding and retain retrieval pointers for details not currently needed, rather than accumulating
-content indefinitely. Consider the cost of recovering information when deciding what to retain.
+In the persistent REPL, variables and functions also persist across context windows.
 
-Information stored in the environment is not automatically model input; inspect and select it according
-to the next step. Preserve continuity when reorganizing context, distinguishing currently visible input,
-live runtime state and persisted evidence. Context reset does not reset the environment; process restart
-does not restore live objects. Save and load explicitly for continuity across restarts. Preserve goals,
-constraints and progress through transitions, including recovery, and check current state when resuming.`,
-  tool: `## Build and maintain capabilities
+- task_state: object, initially empty
 
-Use tool_catalog to discover existing tools. Read their implementation and documentation to understand
-purpose, conditions and effects before choosing how to use them. The catalog indexes capabilities;
-actual capabilities come from current implementations.
+A variable for saving and maintaining information about the current task. It does not automatically enter context and is free for you to edit and use.
 
-Turn methods worth reusing into tools with clear responsibilities that are easy to understand and verify.
-Document and verify actual use before adding them to the catalog; one-off work need not become a tool.
+- tool_catalog: object, function name to purpose description
 
-As tools change, maintain their documentation and catalog entries and check real callers so discoverable
-capabilities match actual behavior. Preserve working definitions and entries for replacement, restore both
-if verification fails, and check callers when removing tools. These are your practices, not a workflow
-enforced by the catalog. Judge reuse by both task outcomes and maintenance cost.`,
-  reflection: `## Learn and modify yourself
+A variable for saving and maintaining the REPL tool catalog. It does not automatically enter context.
 
-Notice differences between expectations and results, including user corrections, and recognize effective
-methods worth reusing. Investigate causes from evidence, distinguishing incidental outcomes, conditions
-of applicability and lessons that generalize.
+It includes built-in tools that you can look up and use first. These tools are also defined in the REPL and can be modified and improved.
 
-Improvement may concern understanding, approach, tools, state organization, instructions or the work loop.
-Choose changes proportionate to the cause; neither additional rules nor self-modification are goals in
-themselves. Preserve the user's goals, constraints and criteria for success while improving how you work.
+As you create reusable functions and tools, update the catalog to expand and improve your capabilities.`,
+  "Self-iteration": `Manage your expectations and actual outcomes, identify differences, reflect proactively, collect and analyze historical behavior, expand your capabilities and tools, and modify and iterate on yourself.
 
-Before changing something, identify the intended improvement, how to judge it and the affected dependencies.
-When testing an uncertain improvement, choose an experiment that can test the hypothesis and limit its effects.
-Keep a recovery path independent of the capability being changed, covering necessary state as well as
-old definitions: saved references are not state snapshots. When changing capabilities needed to keep
-running, such as session, context, model access or cell execution, replace and verify through real callers
-within the same cell, rolling back immediately on failure. Verification and rollback must not depend on
-a later model request, another cell or the changed capability. Track effects requiring later evaluation,
-but verify the ability to continue before returning control. Decide whether to retain, revise or revert
-based on benefits, costs and unresolved issues.
+Redefinitions in the REPL take effect immediately: dynamic lookups use the new definitions, while active calls and saved old references remain unchanged. Validate and test before replacement. You can use try inside a cell to catch exceptions and roll back for greater stability.`,
+  "Recovery mode": `When a failure prevents normal mode from continuing, the agent enters recovery mode.
 
-Apply lessons to subsequent actions and test them again. Keep stable principles in instructions,
-mechanisms and interfaces in implementation, and task progress in working state. Preserve conditions
-and evidence for lessons, and remove repeated, contradictory or obsolete guidance.`,
+Recovery mode uses the same REPL and shares basic capabilities such as instructions, run_cell, and session, but uses an independent context. Its goal is to restore normal-mode operation.`,
 };
 
 // Append-only facts. Views are derived, never persisted separately.
@@ -401,6 +331,7 @@ var recorded_request = async function recorded_request(items, { attempt }) {
   // Snapshot defaults before awaiting; later live edits belong to future requests.
   const requested_model = model_options.model;
   const reasoning = JSON.parse(JSON.stringify(model_options.reasoning ?? null));
+  const prompt_estimate = estimate_tokens([Object.entries(instructions).map(([name, text]) => `# ${name}\n${text}`).join("\n\n"), cell_tool]);
   const scope = operation.getStore();
   const log = scope?.log ?? session;
   const origin = record_origin(log);
@@ -414,9 +345,11 @@ var recorded_request = async function recorded_request(items, { attempt }) {
     response = await request_model(JSON.parse(JSON.stringify(items)), {
       parallel_tool_calls: false,
     });
+    const status = response.status ?? (response.error ? "failed" : "completed");
+    const output = response.output === null && ["incomplete", "failed"].includes(status) ? [] : response.output;
     data = {
       request_id, response_id: response.id ?? null, model: requested_model, response_model: response.model ?? null,
-      reasoning, status: response.status, output: response.output, usage: response.usage ?? null,
+      reasoning, status, output, usage: response.usage ?? null, prompt_estimate,
       error: response.error ?? null, incomplete_details: response.incomplete_details ?? null,
     };
   } catch (error) {
@@ -506,7 +439,21 @@ var pending_calls = function pending_calls(log, mode = null) {
   return pending;
 };
 // Context: a bounded model-input view over a complete session log.
-var estimate_tokens = value => Math.ceil(Buffer.byteLength(JSON.stringify(value), "utf8") / 3);
+/** UTF-8 heuristic plus conservative image budgets for the default GPT-6 Astra model.
+ * Images reserve the detail limit (patches × 1.2); measured usage takes over in Context. */
+var estimate_tokens = function estimate_tokens(value) {
+  let image_tokens = 0;
+  const text = JSON.stringify(value, (k, v) => {
+    if (k === "encrypted_content") return undefined;
+    if (v?.type === "input_image") {
+      image_tokens += v.detail === "low" ? 308 : v.detail === "high" ? 3000 : 36000;
+      const { image_url, ...metadata } = v;
+      return metadata;
+    }
+    return v;
+  }) ?? "";
+  return Math.ceil(Buffer.byteLength(text, "utf8") / 3) + image_tokens;
+};
 
 /** Context selects input from one log, without cached history or model calls. */
 var Context = class Context {
@@ -532,15 +479,24 @@ var Context = class Context {
     return this.log.append("context_reset", { first_kept, handoff, cause_id, ...record_origin(this.log) });
   }
 
-  /** UTF-8 heuristic with a floor from measured usage; not a tokenizer. */
+  /** Estimate input tokens from server-measured usage plus new messages, or UTF-8 heuristic. */
   estimate(items) {
-    let estimate = estimate_tokens([Object.entries(instructions).map(([name, text]) => `# ${name}\n${text}`).join("\n\n"), cell_tool, items]);
+    const valid = n => typeof n === "number" && Number.isFinite(n) && n >= 0;
     const normal = new Set([...records_in_mode(this.log, 0, "normal")].map(r => r.id));
     const last = this.log.records.findLast(r => r.type === "context_reset" || (r.type === "model_response" && r.usage && normal.has(r.id)));
-    if (last?.type === "model_response" && typeof last.usage?.input_tokens === "number" && Number.isFinite(last.usage.input_tokens) && last.usage.input_tokens >= 0) {
-      estimate = Math.max(estimate, last.usage.input_tokens + estimate_tokens(project_messages(this.log, last.id, { max_output_chars: this.max_output_chars, mode: "normal" })));
+    const prompt_items = [Object.entries(instructions).map(([name, text]) => `# ${name}\n${text}`).join("\n\n"), cell_tool];
+    if (last?.type === "model_response" && valid(last.usage?.input_tokens)) {
+      const completed = last.status === "completed" && (last.accepted ?? true);
+      const output = completed && valid(last.usage?.output_tokens) ? last.usage.output_tokens : null;
+      const added = project_messages(this.log, !completed || output !== null ? last.id + 1 : last.id, { max_output_chars: this.max_output_chars, mode: "normal" });
+      const measured = last.usage.input_tokens + (output ?? 0) + (added.length ? estimate_tokens(added) : 0);
+      if (valid(last.prompt_estimate)) {
+        const prompt = estimate_tokens(prompt_items);
+        return measured + Math.max(0, prompt - last.prompt_estimate);
+      }
+      return Math.max(estimate_tokens([...prompt_items, items]), measured);
     }
-    return estimate;
+    return estimate_tokens([...prompt_items, items]);
   }
 };
 
@@ -585,7 +541,7 @@ var agent_step = async function agent_step(items) {
       for (let attempt = 0; attempt < 3; attempt++) {
         response = await recorded_request(items, { attempt: attempt + 1 });
         let code, reason, retryReason, retryable;
-        const status = response.status;
+        const status = response.status ?? (response.error ? "failed" : "completed");
         if (status === "completed") {
           let refused = false, has_reply = false;
           for (const item of response.output) {
@@ -616,7 +572,7 @@ var agent_step = async function agent_step(items) {
           reason = response.error?.message ?? response.incomplete_details?.reason;
           retryReason = status;
           retryable = status === "incomplete" || (status === "failed"
-            && [null, "server_error", "rate_limit_exceeded", "timeout", "overloaded"].includes(code));
+            && [null, "server_error", "rate_limit_exceeded", "timeout", "request_timeout", "overloaded"].includes(code));
         }
         const failure = `Model response ${status} (${code ?? "unspecified"}): ${reason ?? "No details"}`;
         if (!retryable && scope.mode === "recovery") {
@@ -738,6 +694,42 @@ var display = (...values) => {
   log.append("display", { cell_id: active?.cell_id ?? null, text });
   return console_write(text);
 };
+/** Add an image (file path, Buffer/Uint8Array, or data/HTTP(S) URL) to the session for visual inspection.
+ * Optional text labels the image; optional detail is "low", "high", "auto", or "original". Returns the record ID. */
+var view_image = function view_image(image, text = null, { detail = null } = {}) {
+  if (detail !== null && !["low", "high", "auto", "original"].includes(detail)) {
+    throw new RangeError("detail must be 'low', 'high', 'auto', 'original', or null");
+  }
+  if (text !== null && typeof text !== "string") throw new TypeError("text must be a string or null");
+  let url = null, raw = null, mime = "image/png";
+  const url_object = image instanceof URL;
+  if (typeof image === "string" && /^(data:image\/|https?:\/\/)/.test(image)
+      || url_object && (image.href.startsWith("data:image/") || ["http:", "https:"].includes(image.protocol))) {
+    url = String(image);
+  } else if (typeof image === "string") {
+    raw = fs.readFileSync(image);
+  } else if (Buffer.isBuffer(image) || image instanceof Uint8Array) {
+    raw = Buffer.from(image);
+  } else {
+    throw new TypeError("image must be a path, Buffer/Uint8Array, or image URL");
+  }
+  if (raw !== null) {
+    if (!raw.length) throw new RangeError("image data must not be empty");
+    if (raw[0] === 0x89 && raw[1] === 0x50 && raw[2] === 0x4e && raw[3] === 0x47) mime = "image/png";
+    else if (raw[0] === 0xff && raw[1] === 0xd8 && raw[2] === 0xff) mime = "image/jpeg";
+    else if (raw.subarray(0, 4).toString("ascii") === "GIF8") mime = "image/gif";
+    else if (raw.subarray(0, 4).toString("ascii") === "RIFF" && raw.subarray(8, 12).toString("ascii") === "WEBP") mime = "image/webp";
+    else throw new TypeError("Image data must be PNG, JPEG, GIF or WebP");
+    url = `data:${mime};base64,${raw.toString("base64")}`;
+  }
+  if (url.startsWith("data:image/") && url.length > 20971520) {
+    throw new RangeError("Image data URL exceeds the 20971520-character interface limit");
+  }
+  const item = detail ? { type: "input_image", image_url: url, detail } : { type: "input_image", image_url: url };
+  const content = text ? [{ type: "input_text", text }, item] : [item];
+  const log = active_cell.getStore()?.log ?? operation.getStore()?.log ?? session;
+  return log.append("message", { message: { role: "user", content }, ...record_origin(log) });
+};
 var reader = null, input_lines = null;
 /** Read one user line asynchronously; returns null at EOF. Present questions with display first. */
 var input = async function input(prompt = "") {
@@ -753,6 +745,7 @@ var input = async function input(prompt = "") {
 // Plain name-to-purpose index, maintained by the agent under the prompt's tool usage policy.
 // Detailed parameters, effects and cancellation limits belong beside each callable.
 var tool_catalog = {
+  view_image: "Add an image (path, Buffer/Uint8Array, or image URL) to the session for visual inspection.",
   display: "Present values to the user and record them separately from model observations.",
   input: "Read a line asynchronously; returns null at EOF. Present questions with display first.",
   sleep: "Await a delay in milliseconds with the current cell's cancellation signal.",

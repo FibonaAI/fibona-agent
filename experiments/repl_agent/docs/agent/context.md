@@ -24,7 +24,9 @@ A simple reference algorithm chooses the earliest response containing an unanswe
 
 The input budget reserves room for the configured maximum output and must be positive. Context estimates the actual request's input cost, including current instructions and tools. An early warning leaves room for the agent to maintain context; an estimate above the allowed budget causes the work loop to enter recovery before sending the oversized normal input.
 
-Input size can be estimated from its text length and checked against recent measured token usage. Adding the growth since the last measured request helps account for new observations. A warning before the budget is exhausted leaves room for the agent to write a handoff and reset context. Estimation can still differ from the provider’s token accounting.
+Input size can be estimated from its text length and checked against recent measured token usage. Adding the growth since the last measured request helps account for new observations. The request's prompt/tool estimate is captured before sending, so later growth in editable instructions or tools is included even when measured usage is available. A warning before the budget is exhausted leaves room for the agent to write a handoff and reset context. Estimation can still differ from the provider’s token accounting.
+
+Encoded images and encrypted reasoning are not ordinary text. Before measured usage is available, image estimates can reserve a conservative budget for the configured model and detail level without decoding images or counting base64 characters. Once measured usage is available, estimate from that input, accepted output and subsequent additions, including prompt/tool growth. Actual usage remains the provider's reported value; missing usage is unknown.
 
 If measured usage is used, recovery usage and pre-reset input must not inflate a fresh normal view. Response output and later tool results add new input beyond the previous measured request. Missing usage remains unknown. Include added notices and advice when deciding whether the final input fits; the check concerns the request to be sent, not just an earlier intermediate list.
 
