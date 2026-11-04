@@ -116,9 +116,8 @@ install -m 600 "$BUNDLE"/docker-config.json /root/.docker/config.json
 install -d -m 700 -o "$USER_NAME" -g "$USER_NAME" /var/lib/$USER_NAME/.docker
 install -m 600 -o "$USER_NAME" -g "$USER_NAME" "$BUNDLE"/docker-config.json /var/lib/$USER_NAME/.docker/config.json
 
-# sync fills /opt/fibona per job; Harbor stages trials under /harbor.
-mkdir -p /opt/fibona /harbor
-chown "$USER_NAME" /opt/fibona
+# Harbor stages trials under /harbor.
+mkdir -p /harbor
 
 systemctl daemon-reload
 systemctl enable fibona-data containerd docker fibona-proxy

@@ -8,7 +8,7 @@ cp eval/example.yaml ~/fibona-eval-configs/my-job.yaml   # Configs live outside 
 make -C eval job CONFIG=~/fibona-eval-configs/my-job.yaml
 ```
 
-A job records the code (commit and uncommitted patch) → mirrors task images → launches ECS workers → syncs Fibona
+A job records the code (commit and uncommitted patch) → mirrors task images → launches ECS workers
 → runs Harbor → deletes the workers → uploads to TOS.
 
 ## Prerequisites
@@ -16,6 +16,10 @@ A job records the code (commit and uncommitted patch) → mirrors task images �
 - In the environment: `VOLCENGINE_ACCESS_KEY`/`VOLCENGINE_SECRET_KEY`, `TOS_ACCESS_KEY`/`TOS_SECRET_KEY`,
   `FIBONA_API_KEY` (optionally `FIBONA_BASE_URL`).
 - Read access to the SSH key in `settings.pk`; git `user.name` and `user.email` set.
+
+Both Fibona adapters upload the current local source during installation, including uncommitted changes.
+Task containers install uv, Python 3.12 and locked dependencies, so they need network access to download them.
+No prebuilt wheel bundle or shared `/opt/fibona` mount is needed.
 
 ## Config
 
@@ -45,7 +49,7 @@ Existing configs with `base_url` must move that value to the environment and rem
 ## Make targets
 
 - `make job CONFIG=...`: run one job; the only entry point.
-- `make dist`, `make bin/crane`: run by `job`; rarely needed on their own.
+- `make bin/crane`: run by `job`; rarely needed on its own.
 - `make image HOST=... KEY=... PUBKEY=...`: build a new CPU worker image.
 
 ## Results and stopping

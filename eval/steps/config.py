@@ -11,9 +11,6 @@ from plugins.hosts import Resources, SSHSettings
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, NonNegativeInt, PositiveInt, model_validator
 from steps.workers import ECSSpec
 
-# Synced to every host by job.py. EC2-style environments bind host paths at the same container path.
-MOUNTS = [{"type": "bind", "source": "/opt/fibona", "target": "/opt/fibona", "read_only": True}]
-
 
 class ModelSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -61,7 +58,7 @@ class JobConfig(BaseModel):
     model: str  # As `harbor run -m` takes it, e.g. openai/gpt-6-astra.
     agent: str = Field(default="plugins.agent:Fibona", min_length=1)  # Harbor name or module:Class.
     model_settings: ModelSettings = ModelSettings()
-    settings: SSHSettings  # Shared SSH login, private key path and port for sync and Harbor.
+    settings: SSHSettings  # Shared SSH login, private key path and port for Harbor.
     groups: list[JobGroup] = Field(min_length=1)  # First matching group supplies the task's hosts.
     exclude: list[str] = []  # Task name globs to skip.
     limit: PositiveInt | None = None  # At most this many tasks, after filtering.
@@ -101,8 +98,6 @@ class JobConfig(BaseModel):
         args += [
             "-n",
             str(sum(host.cpus for host in self.hosts.values())),
-            "--mounts",
-            json.dumps(MOUNTS),
             "--max-retries",
             "2",
         ]

@@ -2,13 +2,16 @@
 
 Uses the local Harbor bootstrap and passes reasoning effort through the Fibona CLI.
 
-steps/config.py mounts /opt/fibona (wheels, uv and Python, copied by job.py), so Fibona installs offline.
-Tasks with MCP servers additionally install the MCP SDK, as in the local Harbor agent.
+Installation uploads the current local source and installs uv, Python and locked dependencies in the task container.
+Tasks with MCP servers additionally install the MCP SDK.
 After the run, Fibona's run logs become agent/trajectory.json (ATIF), which `harbor view` shows; see plugins/utils.py.
 """
 
+import asyncio
 import json
 import shlex
+import tarfile
+import tempfile
 from pathlib import Path
 
 from harbor.agents.capabilities import AgentCapabilities
@@ -23,6 +26,7 @@ BOOTSTRAP = (Path(__file__).parent / "bootstrap.py").read_text()
 
 class Fibona(BaseInstalledAgent):
     capabilities = AgentCapabilities(skills=True, mcp_servers=True)
+    _REPO = '"$HOME/.local/share/harbor-fibona"'
 
     def __init__(self, *args, fast: bool = False, ultrafast: bool = False, **kwargs) -> None:
         if fast and ultrafast:
@@ -82,17 +86,45 @@ class Fibona(BaseInstalledAgent):
             (self.logs_dir / "trajectory.json").write_text(format_trajectory_json(trajectory.to_json_dict()))
 
     async def install(self, environment) -> None:
+        source = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory(prefix="harbor-fibona-") as directory:
+            archive_path = Path(directory) / "source.tar.gz"
+
+            def pack_source():
+                def source_file(member):
+                    if "__pycache__" in Path(member.name).parts or member.name.endswith(".pyc"):
+                        return None
+                    return member
+
+                with tarfile.open(archive_path, "w:gz") as archive:
+                    for name in (
+                        "fibona.py",
+                        "core",
+                        "agent_assets",
+                        "bootstraps",
+                        "pyproject.toml",
+                        "uv.lock",
+                        "README.md",
+                        "LICENSE",
+                    ):
+                        archive.add(source / name, arcname=name, filter=source_file)
+
+            await asyncio.to_thread(pack_source)
+            await self.ensure_system_dependencies(environment, ("curl", "ca_certificates"))
+            await environment.upload_file(archive_path, "/installed-agent/fibona-source.tar.gz")
         await self.exec_as_agent(
             environment,
-            command="set -euo pipefail; UV_PYTHON_INSTALL_DIR=/opt/fibona/python /opt/fibona/dist/uv tool install "
-            "--python 3.12 --offline --no-index --find-links /opt/fibona/dist /opt/fibona/dist/fibona_agent-*.whl; "
+            command="set -euo pipefail; "
+            'curl -fsSL https://astral.sh/uv/0.13.5/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" sh; '
+            f"mkdir -p {self._REPO}; "
+            f"tar -xzf /installed-agent/fibona-source.tar.gz -C {self._REPO}; "
+            f'"$HOME/.local/bin/uv" sync --project {self._REPO} --python 3.12 --frozen --no-dev; '
             f"printf %s {shlex.quote(BOOTSTRAP)} > $HOME/fibona-bootstrap.py",
         )
         if self.mcp_servers:
             await self.exec_as_agent(
                 environment,
-                command="/opt/fibona/dist/uv pip install --python "
-                '"$(/opt/fibona/dist/uv tool dir)/fibona-agent/bin/python" "mcp==1.25.0"',
+                command=f'"$HOME/.local/bin/uv" pip install --python {self._REPO}/.venv/bin/python "mcp==1.25.0"',
             )
 
     @with_prompt_template
@@ -127,8 +159,8 @@ class Fibona(BaseInstalledAgent):
         await self.exec_as_agent(
             environment,
             command=f"printf %s {shlex.quote(instruction)} > /logs/agent/instruction.txt; "  # The trajectory's first step.
-            'export PATH="$HOME/.local/bin:/opt/fibona/dist:$PATH"; '
-            "$HOME/.local/bin/fibona --boot-mode $HOME/fibona-bootstrap.py "
+            'export PATH="$HOME/.local/bin:$PATH"; '
+            f"{self._REPO}/.venv/bin/python {self._REPO}/fibona.py --boot-mode $HOME/fibona-bootstrap.py "
             f"{shlex.join(flags)} {shlex.quote(instruction)} < /dev/null > /logs/agent/fibona.txt 2>&1; "
             'status=$?; tail -c 65536 /logs/agent/fibona.txt; exit "$status"',
             env=env,

@@ -136,12 +136,15 @@ class ReplAgent(BaseInstalledAgent):
         agent = self.logs_dir / "agent.py"
         agent.write_text(batch_agent((SOURCE / "python/agent.py").read_text()))
         await environment.upload_file(str(agent), "/installed-agent/repl-agent/python/agent.py")
+        for name in ("pyproject.toml", "uv.lock"):
+            await environment.upload_file(str(SOURCE.parents[1] / name), f"/installed-agent/repl-agent/{name}")
+        await self.ensure_system_dependencies(environment, ("curl", "ca_certificates"))
         await self.exec_as_agent(
             environment,
-            command="set -eu; export UV_PYTHON_INSTALL_DIR=/opt/fibona/python; "
-            '/opt/fibona/dist/uv venv --python 3.12 --offline "$HOME/.local/share/fibona-repl-agent"; '
-            "/opt/fibona/dist/uv pip install --offline --no-index --find-links /opt/fibona/dist "
-            '--python "$HOME/.local/share/fibona-repl-agent/bin/python" /opt/fibona/dist/fibona_agent-*.whl',
+            command="set -euo pipefail; "
+            'curl -fsSL https://astral.sh/uv/0.13.5/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" sh; '
+            'UV_PROJECT_ENVIRONMENT="$HOME/.local/share/fibona-repl-agent" "$HOME/.local/bin/uv" sync '
+            "--project /installed-agent/repl-agent --python 3.12 --frozen --no-dev --no-install-project",
         )
 
     @with_prompt_template
