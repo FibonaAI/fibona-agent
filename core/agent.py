@@ -63,6 +63,9 @@ You wake up knowing only what the call gives you, so build `input` from state: t
 facts you need from variables and `history`, and name the variables that hold the full data so the next cell
 can use them.
 
+Ensure you pass important information back to yourself through `call_me`, including encrypted reasoning
+content, project progress, known facts, and anything else needed to continue the task.
+
 
 ## What a cell does
 
