@@ -40,6 +40,10 @@ For adapters using the shared environment helper, explicit YAML values override 
 `model_settings.xxx` maps to `FIBONA_XXX` (objects use JSON), `model` to `FIBONA_MODEL`, and
 `base_url` to `FIBONA_BASE_URL`; supported settings depend on the adapter.
 
+The default agent sets `FIBONA_PROMPT_CACHE_KEY` to the trial's id (`id` in the trial's `result.json`), so all of a
+trial's model calls send one `prompt_cache_key`: they share prompt-cache routing, and a third-party gateway that routes
+by this key can keep the trial on one upstream account.
+
 ## Make targets
 
 - `make job CONFIG=...`: run one job; the only entry point.

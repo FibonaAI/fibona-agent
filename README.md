@@ -54,6 +54,8 @@ Requires Python 3.12+ and `uv`.
 
    Set `FIBONA_MODEL` to your model ID; it defaults to `gpt-6-astra`.
    Set `FIBONA_BASE_URL` to use an OpenAI-compatible gateway.
+   Set `FIBONA_PROMPT_CACHE_KEY` to send it as `prompt_cache_key` with every model call of the run. The calls then
+   share prompt-cache routing, and a third-party gateway that routes by this key can keep the run on one upstream account.
    `call_me` uses the [OpenAI Responses API](https://developers.openai.com/api/reference/resources/responses) in stateless mode:
    it sends the full context each round with `store=False`. To continue across calls, include the earlier
    input and returned `r.output` in the next `input`; `previous_response_id` is not supported.

@@ -92,6 +92,8 @@ class Fibona(BaseInstalledAgent):
                 "Fibona supports reasoning_effort medium/high/xhigh/max; select an agent that supports the requested effort"
             )
         env["FIBONA_LOG_DIR"] = "/logs/agent"
+        if self.context_id is not None:  # The trial id: one prompt_cache_key for all of a trial's model calls.
+            env["FIBONA_PROMPT_CACHE_KEY"] = str(self.context_id)
         if (memory_mb := environment.task_env_config.memory_mb) is not None:
             instruction += (
                 f"\n\nDeclared memory budget for this task's agent container: {memory_mb} MiB. "
