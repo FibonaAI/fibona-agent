@@ -12,6 +12,7 @@ model_settings:                 # Shared model settings; omitted values use envi
   api_retries: 8                # OpenAI client retries per call.
   # context_tokens: 1048576     # Input + output budget for agents with a context-window policy.
   # extra_body: {}             # Optional JSON request extensions, interpreted by the model API.
+  # price: {input: 10, cached_input: 1, cache_write: 12.5, output: 50}  # USD/1M tokens (gpt-6-astra), see README.
 registry: fibona-cn-beijing.cr.volces.com/mlp   # Task images are mirrored here before the run and pulled from here.
 settings:                       # SSH login to every worker and host.
   user: harbor-runner
