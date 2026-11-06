@@ -92,7 +92,14 @@ class Fibona(BaseInstalledAgent):
                 "Fibona supports reasoning_effort medium/high/xhigh/max; select an agent that supports the requested effort"
             )
         env["FIBONA_LOG_DIR"] = "/logs/agent"
-        if self.context_id is not None:  # The trial id: one prompt_cache_key for all of a trial's model calls.
+        # One prompt_cache_key for every model call of the trial: the job's extra_body.prompt_cache_key if set (moved
+        # out of extra_body, which bootstrap.py passes to call_me alone), else the trial id. Harbor 0.24.0 always sets
+        # context_id; the check guards other Harbor versions.
+        extra_body = json.loads(env.get("FIBONA_EXTRA_BODY") or "{}")
+        if isinstance(extra_body, dict) and "prompt_cache_key" in extra_body:
+            env["FIBONA_PROMPT_CACHE_KEY"] = str(extra_body.pop("prompt_cache_key"))
+            env["FIBONA_EXTRA_BODY"] = json.dumps(extra_body)
+        elif self.context_id is not None:
             env["FIBONA_PROMPT_CACHE_KEY"] = str(self.context_id)
         if (memory_mb := environment.task_env_config.memory_mb) is not None:
             instruction += (
