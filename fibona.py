@@ -67,6 +67,8 @@ def main() -> int:
         ) as client:
             if args.service_tier:
                 client.responses.create = partial(client.responses.create, service_tier=args.service_tier)
+            if prompt_cache_key := os.getenv("FIBONA_PROMPT_CACHE_KEY"):  # Shared by every model call of this run.
+                client.responses.create = partial(client.responses.create, prompt_cache_key=prompt_cache_key)
             mind = Mind(
                 client,
                 model,

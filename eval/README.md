@@ -40,6 +40,11 @@ For adapters using the shared environment helper, explicit YAML values override 
 `model_settings.xxx` maps to `FIBONA_XXX` (objects use JSON), `model` to `FIBONA_MODEL`, and
 `base_url` to `FIBONA_BASE_URL`; supported settings depend on the adapter.
 
+The default agent sends one `prompt_cache_key` with all of a trial's model calls (`FIBONA_PROMPT_CACHE_KEY`, see the
+[README](../README.md)): `model_settings.extra_body.prompt_cache_key` if set, shared by the whole job, else the trial's
+id. Harbor gives each retry a new id and deletes the failed attempt, so only the final attempt's id is in its
+`result.json`.
+
 ## Make targets
 
 - `make job CONFIG=...`: run one job; the only entry point.
