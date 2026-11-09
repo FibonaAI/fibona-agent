@@ -10,7 +10,7 @@ from typing import Literal
 
 from plugins.hosts import Resources, SSHSettings
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, NonNegativeInt, PositiveInt, model_validator
-from steps.workers import ECSSpec
+from steps.workers import HOMES, REGION, ECSSpec
 
 
 class ModelSettings(BaseModel):
@@ -75,6 +75,10 @@ class JobConfig(BaseModel):
     # Task images are mirrored here before the run and pulled from here, local or cluster; every machine's Docker
     # must be logged in to it. Without it, tasks pull from upstream.
     registry: str | None = None
+    region: str = REGION  # Of the ECS workers and vePFS; outside cn-beijing, job.py reaches workers over their EIPs.
+    vepfs: str | None = (
+        None  # groups only: a mount service, e.g. mount-f9c28f8d; ECS workers mount it (steps/workers.py).
+    )
     exclude: list[str] = []  # Task name globs to skip.
     limit: PositiveInt | None = None  # At most this many tasks, after filtering.
     extra_args: list[str] = []  # Passed to `harbor run` as is, e.g. ["--timeout-multiplier", "2"].
@@ -83,10 +87,14 @@ class JobConfig(BaseModel):
     def one_mode(self) -> "JobConfig":
         if bool(self.local) == bool(self.groups):
             raise ValueError("Give either local (this machine alone) or groups (a cluster).")
-        if self.local and self.settings:
-            raise ValueError("local runs without SSH; drop settings.")
+        if self.local and (self.settings or self.vepfs):
+            raise ValueError("local runs without SSH or workers; drop settings and vepfs.")
         if self.groups and not self.settings:
             raise ValueError("groups need settings.")
+        if self.vepfs and self.region not in HOMES:
+            raise ValueError(f"No vePFS home directory known for {self.region}; add it to steps/workers.py HOMES.")
+        if self.registry and self.region != REGION:
+            raise ValueError(f"The registry is in {REGION}; outside it, drop registry and pull from upstream.")
         return self
 
     def run_name(self) -> str:
