@@ -1,0 +1,29 @@
+# A cluster job in ap-southeast-1 (Johor): tasks run on ECS workers launched for the job, reached over their EIPs.
+# Fields not explained here are as in cluster.beijing.example.yaml. Copy this anywhere, edit it, then:
+# make -C eval job CONFIG=<path>; the job archives a copy (to TOS in cn-beijing, as every job).
+name: tb2-smoke-johor
+archive: tos://fibona-eval-archive/jobs
+dataset: terminal-bench@2.0
+model: openai/gpt-6-astra
+model_settings:
+  reasoning_effort: high
+  max_output_tokens: 32768
+region: ap-southeast-1          # Workers and vePFS live here; the image starts no proxy, traffic goes out directly.
+# No registry: ours is in cn-beijing, so tasks pull their images from upstream.
+# vepfs: mount-e84848a5         # ECS workers mount vePFS at /vepfs (adds ~3 min) and /home/users as on MLP dev boxes;
+                                # write job data to /home/users/shared.
+settings:
+  user: harbor-runner
+  pk: ~/.ssh/fibona-harbor-runner
+groups:                         # ECS only: this machine cannot reach fixed hosts in this region's VPC.
+  - ecs:
+      count: 1                  # The region's vCPU quota is tight; check it before going bigger.
+      instance_type: ecs.g4i.2xlarge          # 8 vCPU, 32 GiB.
+      budget: {cpus: 7, memory_mb: 28672}
+      image_id: image-yeyth7bg3dkdwsfu7sap    # CPU worker image, built in this region (see build/image.sh).
+      zone: ap-southeast-1c                   # The vePFS mount service's zone and subnet.
+      subnet_id: subnet-3oos2x60mx7nk3u43joijyuub
+      security_group_ids: [sg-1husjkrqw3pc077tv43iwyqfe, sg-1hunqnkw1uvb477tv41tupk7o]
+      key_pair: fibona-songwei
+    tasks: []
+limit: 2

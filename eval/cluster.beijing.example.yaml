@@ -1,5 +1,5 @@
-# A cluster job: tasks run on ECS workers launched for the job (or on fixed hosts, see groups). For one machine,
-# see local.example.yaml. Copy this anywhere, edit it, then: make -C eval job CONFIG=<path>; the job archives a copy.
+# A cluster job in cn-beijing: tasks run on ECS workers launched for the job (or on fixed hosts, see groups). For
+# ap-southeast-1 see cluster.johor.example.yaml, for one machine local.example.yaml. Copy this anywhere, edit it, then: make -C eval job CONFIG=<path>; the job archives a copy.
 name: tb2-smoke                 # The run is <UTC time>-<name>: eval/experiments/<run>/ and <archive>/<run>/.
 archive: tos://fibona-eval-archive/jobs
 dataset: terminal-bench@2.0     # Harbor dataset, as `harbor run -d` takes it.
@@ -14,8 +14,7 @@ model_settings:                 # Shared model settings; omitted values use envi
   # extra_body: {}             # Optional JSON request extensions, interpreted by the model API.
 registry: fibona-cn-beijing.cr.volces.com/mlp   # Task images are mirrored here before the run and pulled from here.
 # vepfs: mount-f9c28f8d         # ECS workers mount vePFS at /vepfs (adds ~3 min) and /home/users as on MLP dev boxes;
-                                # write job data to /home/users/shared. ap-southeast-1: region: ap-southeast-1,
-                                # vepfs: mount-e84848a5, no registry.
+                                # write job data to /home/users/shared.
 settings:                       # SSH login to every worker and host.
   user: harbor-runner
   pk: ~/.ssh/fibona-harbor-runner   # Private key path on the machine running make.
@@ -26,7 +25,7 @@ groups:                         # First matching group wins; put an optional cat
       count: 2
       instance_type: ecs.g3a.16xlarge         # 64 vCPU, 256 GiB.
       budget: {cpus: 56, memory_mb: 229376}   # Scheduling budget per worker, after system/sidecar headroom.
-      image_id: image-yeytfwnbf9hli7b4xnye    # CPU worker image, see build/image.sh.
+      image_id: image-yez3q6brh4lcg8wgkl3r    # CPU worker image, see build/image.sh.
       zone: cn-beijing-d
       subnet_id: subnet-1c1eimqh9raio5e8j713wiixm
       security_group_ids: [sg-2f801jdyury0w4f4pzzhrpbby, sg-w0ggrhvvutc0865yk9p3w4xb]

@@ -1,5 +1,5 @@
 # A local job: tasks run on this machine alone, in its Docker as you, with no SSH or workers.
-# For a cluster, see cluster.example.yaml. Copy this anywhere, edit it, then: make -C eval job CONFIG=<path>.
+# For a cluster, see cluster.beijing.example.yaml. Copy this anywhere, edit it, then: make -C eval job CONFIG=<path>.
 name: tb2-local                 # The run is <UTC time>-<name>: eval/experiments/<run>/ and <archive>/<run>/.
 archive: tos://fibona-eval-archive/jobs
 dataset: terminal-bench@2.0     # Harbor dataset, as `harbor run -d` takes it.
