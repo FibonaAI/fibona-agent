@@ -4,12 +4,12 @@
 # Run as root on the build instance after `make image` has unpacked the reference bundle into
 # /tmp/fibona-image: the reference worker's Docker debs, its sing-box binary and its registry login, plus the
 # TUN-mode sing-box config rendered from sing-box.json. All outbound traffic goes through the TUN device except
-# 10/8 (VPC: SSH, CR) and other private ranges; China IPs and Volcengine's 100.64/10 go direct, the rest through
-# proxy-staff-relay. DNS is hijacked: China domains resolve at the VPC resolvers, the rest over DoT through the
-# proxy, since the VPC resolvers return poisoned answers for blocked domains. The geoip-cn/geosite-cn rule sets
-# are SagerNet's, refreshed daily by sing-box; the image keeps the copies cached while it was built. The proxy
-# starts only where the instance metadata names a China region, so the same image serves regions with open
-# internet access.
+# 10/8 (VPC: SSH, CR) and other private ranges; China IPs, Volcengine's 100.64/10 and *.volces.com/*.ivolces.com go
+# direct, the rest through proxy-staff-relay. DNS is hijacked: China and Volcengine domains resolve at the VPC
+# resolvers, the rest over DoT through the proxy, since the VPC resolvers return poisoned answers for blocked
+# domains. The geoip-cn/geosite-cn rule sets are SagerNet's, refreshed daily by sing-box; the image keeps the copies
+# cached while it was built. The proxy starts only where the instance metadata names a China region, so the same
+# image serves regions with open internet access.
 # The build instance needs no internet access. Afterwards stop it and create the image; instances
 # started from that image (with a blank data disk, or none) are ready for jobs as is.
 #

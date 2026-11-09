@@ -39,7 +39,10 @@
       {"type": "udp", "tag": "vpc", "server": "100.96.0.2"},
       {"type": "tls", "tag": "remote", "server": "1.1.1.1", "detour": "proxy-staff-relay"}
     ],
-    "rules": [{"rule_set": "geosite-cn", "server": "vpc"}],
+    "rules": [
+      {"domain_suffix": ["volces.com", "ivolces.com"], "server": "vpc"},
+      {"rule_set": "geosite-cn", "server": "vpc"}
+    ],
     "final": "remote",
     "strategy": "ipv4_only"
   },
@@ -67,6 +70,7 @@
     "rules": [
       {"action": "sniff"},
       {"protocol": "dns", "action": "hijack-dns"},
+      {"domain_suffix": ["volces.com", "ivolces.com"], "outbound": "direct"},
       {"ip_cidr": ["100.64.0.0/10"], "outbound": "direct"},
       {"ip_is_private": true, "outbound": "direct"},
       {"rule_set": "geoip-cn", "outbound": "direct"}
