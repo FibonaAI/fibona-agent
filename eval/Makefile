@@ -1,4 +1,4 @@
-# Everything is a job: make job CONFIG=<config.yaml>, starting from local.example.yaml or cluster.example.yaml. See job.py.
+# Everything is a job: make job CONFIG=<config.yaml>, starting from local.example.yaml or cluster.*.example.yaml. See job.py.
 
 # Pinned tools; uv fetches and caches the Python ones on first use, crane mirrors task images.
 HARBOR_VERSION := 0.24.0

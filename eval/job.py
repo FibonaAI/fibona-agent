@@ -1,6 +1,6 @@
 """Run one job end to end and archive it: the unit of evaluation is experiments/<run>/, run = <UTC time>-<name>.
 
-Usage: make job CONFIG=<config.yaml> (python job.py <config.yaml>); see local.example.yaml and cluster.example.yaml.
+Usage: make job CONFIG=<config.yaml> (python job.py <config.yaml>); see local.example.yaml and cluster.*.example.yaml.
 Steps: record code → mirror images → launch ECS workers (+ vePFS) → sync → Harbor (with profiles) → delete workers
 → upload the job to its archive. A local job has no workers: it syncs to a temporary directory here and runs
 trials in this machine's Docker. Workers are deleted even if the run fails or is stopped; only a SIGKILL

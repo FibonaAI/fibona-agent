@@ -4,7 +4,7 @@ Evaluates Fibona on Harbor datasets and archives every run. One config is one jo
 `experiments/<run>/`, where `<run>` is `<UTC time>-<name>`.
 
 ```bash
-cp eval/cluster.example.yaml ~/fibona-eval-configs/my-job.yaml   # Or local.example.yaml; configs live outside the repo.
+cp eval/cluster.beijing.example.yaml ~/fibona-eval-configs/my-job.yaml   # Or local.example.yaml; configs live outside the repo.
 make -C eval job CONFIG=~/fibona-eval-configs/my-job.yaml
 ```
 
@@ -19,7 +19,7 @@ A job records the code (commit and uncommitted patch) â†’ mirrors task images â†
 
 ## Config
 
-See `local.example.yaml` (one machine) and `cluster.example.yaml` (ECS workers or fixed hosts); unknown keys are rejected.
+See `local.example.yaml` (one machine), `cluster.beijing.example.yaml` (ECS workers or fixed hosts) and `cluster.johor.example.yaml` (ECS workers in ap-southeast-1); unknown keys are rejected.
 
 | Key | Meaning |
 |---|---|
@@ -30,6 +30,8 @@ See `local.example.yaml` (one machine) and `cluster.example.yaml` (ECS workers o
 | `agent` | Optional Harbor agent name or importable `module:Class`; defaults to `plugins.agent:Fibona`. |
 | `model_settings` | Optional: `reasoning_effort`, `max_output_tokens`, `api_retries`, `context_tokens`, `extra_body` (JSON request extensions). |
 | `registry` | Optional: task images are mirrored here before the run and pulled from here, local or cluster; every machine's Docker must be logged in to it. Without it, tasks pull from upstream. |
+| `region` | Optional, default `cn-beijing`: where ECS workers and vePFS live. Elsewhere workers are reached over their EIPs and `registry` is not allowed. |
+| `vepfs` | Optional, cluster jobs: a vePFS mount service; ECS workers mount it at `/vepfs` and its MLP home directory at `/home/users`. |
 | `local` | Single machine: run on this machine alone, in its Docker as the current user, within this budget (`cpus`, `memory_mb`, `gpus`). No SSH; replaces `settings` and `groups`. |
 | `settings` | Cluster jobs: SSH user, key and port. |
 | `groups` | Cluster jobs: where tasks run, either `hosts` (fixed hosts with resource budgets) or `ecs` (workers launched for the job). `tasks` globs match in order; empty is the catch-all. |
@@ -44,7 +46,7 @@ For adapters using the shared environment helper, explicit YAML values override 
 
 - `make job CONFIG=...`: run one job; the only entry point.
 - `make dist`, `make bin/crane`: run by `job`; rarely needed on their own.
-- `make image HOST=... KEY=... PUBKEY=...`: build a new CPU worker image.
+- `make image HOST="<ip> ..." KEY=... PUBKEY=...`: build a new CPU worker image, one host per region.
 
 ## Results and stopping
 
