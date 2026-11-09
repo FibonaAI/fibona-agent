@@ -2,7 +2,14 @@
 # Turn a fresh Ubuntu 22.04 ECS instance into a CPU worker like 10.42.2.111, then capture it as an image.
 #
 # Run as root on the build instance after `make image` has unpacked the reference bundle into
-# /tmp/fibona-image: the reference worker's Docker debs, its sing-box proxy and its registry login.
+# /tmp/fibona-image: the reference worker's Docker debs, its sing-box binary and its registry login, plus the
+# TUN-mode sing-box config rendered from sing-box.json. All outbound traffic goes through the TUN device except
+# 10/8 (VPC: SSH, CR) and other private ranges; China IPs and Volcengine's 100.64/10 go direct, the rest through
+# proxy-staff-relay. DNS is hijacked: China domains resolve at the VPC resolvers, the rest over DoT through the
+# proxy, since the VPC resolvers return poisoned answers for blocked domains. The geoip-cn/geosite-cn rule sets
+# are SagerNet's, refreshed daily by sing-box; the image keeps the copies cached while it was built. The proxy
+# starts only where the instance metadata names a China region, so the same image serves regions with open
+# internet access.
 # The build instance needs no internet access. Afterwards stop it and create the image; instances
 # started from that image (with a blank data disk, or none) are ready for jobs as is.
 #
@@ -25,8 +32,6 @@ fi
 USER_NAME=harbor-runner
 PUBKEY=${1:?Pass the public key for $USER_NAME}
 BUNDLE=/tmp/fibona-image
-PROXY=http://172.17.0.1:1081
-NO_PROXY=localhost,127.0.0.1,10.42.0.0/16,100.64.0.0/10,.volces.com,.ivolces.com
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
@@ -66,8 +71,8 @@ for unit in docker containerd; do
         > /etc/systemd/system/$unit.service.d/data.conf
 done
 
-# Same as the reference worker, plus two fixed addresses: docker0 stays 172.17.0.1, where the proxy
-# listens for containers, and Compose networks get 1024 /24s instead of the default ~30 networks.
+# Same as the reference worker, plus two fixed addresses: docker0 stays 172.17.0.1 and Compose networks get
+# 1024 /24s instead of the default ~30 networks.
 mkdir -p /etc/docker
 cat > /etc/docker/daemon.json <<'EOF'
 {
@@ -78,22 +83,24 @@ cat > /etc/docker/daemon.json <<'EOF'
   "default-address-pools": [{"base": "172.20.0.0/14", "size": 24}]
 }
 EOF
-cat > /etc/systemd/system/docker.service.d/proxy.conf <<EOF
-[Service]
-Environment="HTTP_PROXY=http://127.0.0.1:1081" "HTTPS_PROXY=http://127.0.0.1:1081" "NO_PROXY=$NO_PROXY"
-EOF
-
-# Outbound proxy for the daemon (127.0.0.1) and for containers (docker0); starts after docker creates docker0.
+# TUN-mode proxy for the host and, through auto_redirect, for containers; no per-program proxy settings.
 install -d -m 700 /root/proxy-dev
 install -m 700 "$BUNDLE"/proxy-dev/sing-box /root/proxy-dev/sing-box
 install -m 600 "$BUNDLE"/proxy-dev/config.json /root/proxy-dev/config.json
 install -m 644 "$BUNDLE"/fibona-proxy.service /etc/systemd/system/fibona-proxy.service
+# Outside China regions the unit is skipped at boot and traffic goes out directly; on-failure, unlike the unit's
+# Restart=always, leaves a skipped unit stopped.
+mkdir -p /etc/systemd/system/fibona-proxy.service.d
+cat > /etc/systemd/system/fibona-proxy.service.d/region.conf <<'EOF'
+[Service]
+Restart=on-failure
+ExecCondition=/bin/sh -c 'curl -fsS -m 5 --retry 10 --retry-all-errors http://100.96.0.96/latest/region_id | grep -q "^cn-"'
+EOF
 
 # Docker's apt source and key, kept so `apt-get upgrade` behaves as on the reference worker.
 install -d /etc/apt/keyrings
 install -m 644 "$BUNDLE"/docker.asc /etc/apt/keyrings/docker.asc
 install -m 644 "$BUNDLE"/docker.list /etc/apt/sources.list.d/docker.list
-echo 'Acquire::https::Proxy::download.docker.com "http://127.0.0.1:1081";' > /etc/apt/apt.conf.d/90docker-proxy
 
 id "$USER_NAME" >/dev/null 2>&1 || useradd -m -u 2100 -d /var/lib/$USER_NAME -s /bin/bash "$USER_NAME"
 usermod -aG docker "$USER_NAME"
@@ -104,11 +111,11 @@ echo "$PUBKEY" > /var/lib/$USER_NAME/.ssh/authorized_keys
 chown "$USER_NAME:$USER_NAME" /var/lib/$USER_NAME/.ssh/authorized_keys
 chmod 600 /var/lib/$USER_NAME/.ssh/authorized_keys
 
-# Registry login and container proxy settings, for both root and the runner user.
-python3 - "$BUNDLE"/docker-config.json "$PROXY" "$NO_PROXY" <<'EOF'
+# Registry login for both root and the runner user; drop the reference worker's container proxy settings.
+python3 - "$BUNDLE"/docker-config.json <<'EOF'
 import json, sys
 config = json.load(open(sys.argv[1]))
-config["proxies"] = {"default": {"httpProxy": sys.argv[2], "httpsProxy": sys.argv[2], "noProxy": sys.argv[3]}}
+config.pop("proxies", None)
 json.dump(config, open(sys.argv[1], "w"))
 EOF
 install -d -m 700 /root/.docker
@@ -125,14 +132,14 @@ systemctl enable fibona-data containerd docker fibona-proxy
 systemctl restart fibona-data containerd docker
 systemctl restart fibona-proxy
 
-# What Harbor needs from a worker, checked as the runner user, plus the proxy.
+# What Harbor needs from a worker, checked as the runner user, plus internet access (through the proxy in China).
 sudo -u "$USER_NAME" docker info --format '{{.CgroupVersion}} {{.CgroupDriver}} {{.DockerRootDir}}' | tee /dev/stderr \
     | grep -qx '2 systemd /data/docker' || { echo "Expected rootful Docker on cgroup v2 in /data/docker" >&2; exit 1; }
 sudo -u "$USER_NAME" docker compose version
 sudo -u "$USER_NAME" sudo -n true
-for _ in $(seq 30); do curl -fsS -o /dev/null -x http://127.0.0.1:1081 https://download.docker.com && break; sleep 1; done
-curl -fsS -o /dev/null -x "$PROXY" https://download.docker.com
-echo "Proxy OK"
+for _ in $(seq 60); do curl -fsS -o /dev/null https://download.docker.com && break; sleep 2; done
+curl -fsS -o /dev/null https://download.docker.com
+echo "Internet OK"
 
 # Leave nothing instance-specific in the image: bundle, Docker state, machine ID, cloud-init state, logs.
 systemctl stop fibona-proxy docker docker.socket containerd

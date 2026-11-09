@@ -1,0 +1,77 @@
+{
+  "log": {"level": "warn"},
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "fibona-tun",
+      "address": ["172.19.0.1/30"],
+      "auto_route": true,
+      "auto_redirect": true,
+      "strict_route": true,
+      "route_exclude_address": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "shadowsocks",
+      "tag": "proxy-staff-relay",
+      "server": "120.79.19.79",
+      "server_port": 8442,
+      "method": "aes-128-gcm",
+      "password": "${PROXY_SS_PASSWORD}",
+      "network": "tcp",
+      "detour": "proxy-staff-relay-tls"
+    },
+    {
+      "type": "shadowtls",
+      "tag": "proxy-staff-relay-tls",
+      "server": "120.79.19.79",
+      "server_port": 8442,
+      "version": 3,
+      "password": "${PROXY_SHADOW_TLS_PASSWORD}",
+      "tls": {"enabled": true, "server_name": "www.microsoft.com"}
+    },
+    {"type": "direct", "tag": "direct"}
+  ],
+  "dns": {
+    "servers": [
+      {"type": "udp", "tag": "vpc", "server": "100.96.0.2"},
+      {"type": "tls", "tag": "remote", "server": "1.1.1.1", "detour": "proxy-staff-relay"}
+    ],
+    "rules": [{"rule_set": "geosite-cn", "server": "vpc"}],
+    "final": "remote",
+    "strategy": "ipv4_only"
+  },
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": "vpc",
+    "rule_set": [
+      {
+        "tag": "geoip-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+        "download_detour": "proxy-staff-relay",
+        "update_interval": "1d"
+      },
+      {
+        "tag": "geosite-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
+        "download_detour": "proxy-staff-relay",
+        "update_interval": "1d"
+      }
+    ],
+    "rules": [
+      {"action": "sniff"},
+      {"protocol": "dns", "action": "hijack-dns"},
+      {"ip_cidr": ["100.64.0.0/10"], "outbound": "direct"},
+      {"ip_is_private": true, "outbound": "direct"},
+      {"rule_set": "geoip-cn", "outbound": "direct"}
+    ],
+    "final": "proxy-staff-relay"
+  },
+  "experimental": {"cache_file": {"enabled": true, "path": "/root/proxy-dev/cache.db"}}
+}

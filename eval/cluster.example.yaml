@@ -23,7 +23,7 @@ groups:                         # First matching group wins; put an optional cat
       count: 2
       instance_type: ecs.g3a.16xlarge         # 64 vCPU, 256 GiB.
       budget: {cpus: 56, memory_mb: 229376}   # Scheduling budget per worker, after system/sidecar headroom.
-      image_id: image-yey3mu3z3b9q7dup24so    # CPU worker image, see build/image.sh.
+      image_id: image-yeytfwnbf9hli7b4xnye    # CPU worker image, see build/image.sh.
       zone: cn-beijing-d
       subnet_id: subnet-1c1eimqh9raio5e8j713wiixm
       security_group_ids: [sg-2f801jdyury0w4f4pzzhrpbby, sg-w0ggrhvvutc0865yk9p3w4xb]
