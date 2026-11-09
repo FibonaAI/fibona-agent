@@ -13,6 +13,9 @@ model_settings:                 # Shared model settings; omitted values use envi
   # context_tokens: 1048576     # Input + output budget for agents with a context-window policy.
   # extra_body: {}             # Optional JSON request extensions, interpreted by the model API.
 registry: fibona-cn-beijing.cr.volces.com/mlp   # Task images are mirrored here before the run and pulled from here.
+# vepfs: mount-f9c28f8d         # ECS workers mount vePFS at /vepfs (adds ~3 min) and /home/users as on MLP dev boxes;
+                                # write job data to /home/users/shared. ap-southeast-1: region: ap-southeast-1,
+                                # vepfs: mount-e84848a5, no registry.
 settings:                       # SSH login to every worker and host.
   user: harbor-runner
   pk: ~/.ssh/fibona-harbor-runner   # Private key path on the machine running make.

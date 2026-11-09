@@ -1,7 +1,7 @@
 """Run one job end to end and archive it: the unit of evaluation is experiments/<run>/, run = <UTC time>-<name>.
 
 Usage: make job CONFIG=<config.yaml> (python job.py <config.yaml>); see local.example.yaml and cluster.example.yaml.
-Steps: record code → mirror images → launch ECS workers → sync → Harbor (with profiles) → delete workers
+Steps: record code → mirror images → launch ECS workers (+ vePFS) → sync → Harbor (with profiles) → delete workers
 → upload the job to its archive. A local job has no workers: it syncs to a temporary directory here and runs
 trials in this machine's Docker. Workers are deleted even if the run fails or is stopped; only a SIGKILL
 leaves them, tagged fibona-job=<run> in ECS.
@@ -10,6 +10,7 @@ leaves them, tagged fibona-job=<run> in ECS.
 import getpass
 import json
 import os
+import secrets
 import shlex
 import shutil
 import signal
@@ -46,7 +47,7 @@ def took(started: float) -> str:
 def launch_workers(config: JobConfig, run: str, job_dir: Path, log: Callable[[str], None]) -> list[JobGroup]:
     """Concrete host groups: fixed hosts checked over SSH, ECS groups launched, recording instances as soon as they
     exist. log(message) gets one line per host or instance event."""
-    groups, launched = [], []
+    groups, launched, public = [], [], config.region != workers.REGION
     for index, group in enumerate(config.groups):
         hosts = group.hosts
         for host in hosts:
@@ -63,12 +64,37 @@ def launch_workers(config: JobConfig, run: str, job_dir: Path, log: Callable[[st
             launched += [{"id": i, "type": spec.instance_type} for i in ids]
             (job_dir / "instances.json").write_text(json.dumps(launched, indent=2) + "\n")
             log(f"created {', '.join(ids)}")
-            ips = workers.wait(ids, ssh_command(config.settings, ""), log)
-            for instance, ip in zip(launched[-len(ids) :], ips, strict=True):
-                instance["ip"] = ip
+            pairs = workers.wait(ids, ssh_command(config.settings, ""), log, public)
+            for instance, (ip, eip) in zip(launched[-len(ids) :], pairs, strict=True):
+                instance.update(ip=ip, eip=eip, host=eip if public else ip)  # host: where SSH and Harbor go.
             (job_dir / "instances.json").write_text(json.dumps(launched, indent=2) + "\n")
-            hosts = dict.fromkeys(ips, group.ecs.budget)
+            hosts = dict.fromkeys((instance["host"] for instance in launched[-len(ids) :]), group.ecs.budget)
         groups.append(JobGroup(hosts=hosts, tasks=group.tasks))
+    if config.vepfs and launched:
+        # The client-mount nodes log in to the workers as root with it; ECS wants upper and lower case, digits and a
+        # symbol, at most 30 characters.
+        started, root_password = time.monotonic(), f"Fb{secrets.token_hex(12)}9!"
+        ips, hosts = [instance["ip"] for instance in launched], [instance["host"] for instance in launched]
+        for host in hosts:
+            run_ssh = [*config.ssh(host), host, "sudo chpasswd"]
+            subprocess.run(run_ssh, input=f"root:{root_password}\n", text=True, capture_output=True, check=True)
+        service, home = config.vepfs, shlex.quote(f"/vepfs/{workers.HOMES[config.region]}")
+        log(f"vepfs: {service} joins {len(ips)} workers and mounts /vepfs, output in vepfs.log")
+        # To the client-mount nodes through a worker, in every region: outside cn-beijing this machine cannot reach
+        # their private IPs, and one path keeps the vePFS steps the same everywhere (see steps/workers.py).
+        via = shlex.join([*config.ssh(hosts[0]), "-W", "%h:%p", hosts[0]])
+        (job_dir / "vepfs.log").write_text(
+            workers.on_mount_node(service, f"vepfs -p '{root_password}' add password {' '.join(ips)}", via)
+        )
+        bind = (
+            f"findmnt -t gpfs -no SIZE /vepfs && sudo mkdir -p /home/users && sudo mount --bind {home} /home/users"
+            " && test -w /home/users/shared"
+        )
+        for host in hosts:
+            mounted = subprocess.run([*config.ssh(host), "-n", host, bind], capture_output=True, text=True)
+            if mounted.returncode:
+                raise RuntimeError(f"{host}: /vepfs or writable /home/users/shared missing: {mounted.stderr.strip()}")
+            log(f"{host}  /vepfs mounted, {mounted.stdout.strip()}; {home} at /home/users ({took(started)})")
     return groups
 
 
@@ -108,11 +134,11 @@ def stop_on_signal(signum, _) -> None:
 def main() -> int:
     # SDK clients sign for this region with VOLCENGINE_ACCESS_KEY/VOLCENGINE_SECRET_KEY from the environment.
     configuration = volcenginesdkcore.Configuration()
-    configuration.region = workers.REGION
-    volcenginesdkcore.Configuration.set_default(configuration)
     source = Path(sys.argv[1]).resolve()
     os.chdir(Path(__file__).resolve().parent)
     config = JobConfig.model_validate(yaml.safe_load(source.read_text()))
+    configuration.region = config.region
+    volcenginesdkcore.Configuration.set_default(configuration)
     run = config.run_name()
     try:
         who = code.git("config", "user.name").strip() + " <" + code.git("config", "user.email").strip() + ">"
@@ -221,6 +247,19 @@ def main() -> int:
         log("deleting workers, archiving", step["cleanup"])
         if (job_dir / "instances.json").exists():
             meta["instances"] = json.loads((job_dir / "instances.json").read_text())
+            joined = [instance for instance in meta["instances"] if "host" in instance]
+            if config.vepfs and joined:
+                try:
+                    ips, hosts = [instance["ip"] for instance in joined], [instance["host"] for instance in joined]
+                    for host in hosts:  # The bind mount would keep `vepfs del` from unmounting /vepfs.
+                        subprocess.run([*config.ssh(host), "-n", host, "sudo umount /home/users"], capture_output=True)
+                    via = shlex.join([*config.ssh(hosts[0]), "-W", "%h:%p", hosts[0]])  # As for `vepfs add`.
+                    with open(job_dir / "vepfs.log", "a") as file:
+                        file.write(workers.on_mount_node(config.vepfs, f"vepfs del {' '.join(ips)}", via))
+                    log(f"vepfs: {', '.join(ips)} left {config.vepfs}")
+                except Exception as error:
+                    meta["vepfs_error"] = str(error)
+                    log(traceback.format_exc().rstrip(), "error")
             try:
                 for instance in workers.release(run):
                     log(f"{instance}  deleted")
