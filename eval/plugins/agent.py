@@ -54,6 +54,8 @@ class Fibona(BaseInstalledAgent):
                     continue
                 usage = record["response"].get("usage") or {}
                 seen = True
+                if usage.get("incomplete"):
+                    missing.update(totals)
                 values = {
                     "n_input_tokens": usage.get("input_tokens"),
                     "n_cache_tokens": (usage.get("input_tokens_details") or {}).get("cached_tokens"),

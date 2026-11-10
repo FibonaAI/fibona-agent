@@ -130,10 +130,12 @@ def convert(logs_dir: Path, model_name: str | None = None) -> Trajectory | None:
                         "cached_tokens": (usage.get("input_tokens_details") or {}).get("cached_tokens"),
                         "cost_usd": usage.get("cost"),
                     }
-                    if any(v is not None for v in metrics.values()):
+                    if not usage.get("incomplete") and any(v is not None for v in metrics.values()):
                         step["metrics"] = {k: v for k, v in metrics.items() if v is not None}
                     if record.get("source") != "call_me":
                         step["extra"] = {"source": record.get("source")}
+                    if usage.get("incomplete"):
+                        step.setdefault("extra", {})["usage_incomplete"] = True
                     # set_next_cell results are in the output too; the last accepted one chooses the next cell.
                     results = {
                         o.get("call_id"): o.get("output") for o in output if o.get("type") == "function_call_output"
