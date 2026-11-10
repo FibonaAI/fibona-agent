@@ -1,0 +1,32 @@
+{
+  "name": "fibona-agent",
+  "version": "0.1.0",
+  "description": "Fibona's core in JavaScript: the model writes the next cell of the program it runs in.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FibonaAI/fibona-agent.git",
+    "directory": "js"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/agent.d.ts",
+      "import": "./dist/agent.js"
+    },
+    "./global": "./dist/agent.global.js",
+    "./openai_responses_api_docs.json": "./openai_responses_api_docs.json"
+  },
+  "files": [
+    "dist",
+    "openai_responses_api_docs.json"
+  ],
+  "scripts": {
+    "build": "cp ../agent_assets/openai_responses_api_docs.json . && tsup src/agent.ts --format esm,iife --global-name Fibona --minify --clean && tsc",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "tsup": "9.0.0",
+    "typescript": "7.0.2"
+  }
+}
