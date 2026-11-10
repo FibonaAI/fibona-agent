@@ -4,7 +4,6 @@ from collections.abc import Callable
 from contextlib import chdir
 from datetime import UTC, datetime
 from functools import partial
-from importlib.resources import files
 from pathlib import Path
 from threading import Lock
 from uuid import uuid4
@@ -46,7 +45,8 @@ your memory.
 
 ## call_me
 
-`call_me` uses the OpenAI Responses API in stateless mode, with host-specific behavior defined in the code.
+`call_me` follows the standard OpenAI Responses API format, in stateless mode, with host-specific behavior defined
+in the code. For details, see https://developers.openai.com/api/reference/resources/responses.
 
 `call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for
 all items).
@@ -78,7 +78,6 @@ content, project progress, known facts, and anything else needed to continue the
 ## State
 
 - **Variables** persist. Inspect them with `globals()`; values are not automatically sent to you.
-- **`openai_responses_api_docs`**: the full OpenAI Responses API reference (page name -> Markdown); read relevant pages as needed.
 - **`history`**: one `{code, summary, output, error, status}` dict per cell, including the current cell at the end.
   `summary` describes the cell's intent. `output` records stdout and stderr as of now.
   `error` records failures. `status` is `running`, `completed`, or `error`. Finished records are copies.
@@ -123,7 +122,7 @@ SET_NEXT_CELL = {
     },
 }
 
-Submit = Callable[[str, str], None]
+Submit = Callable[[str, str], str | None]  # Returns the summary of the submission it replaced, if any.
 REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
@@ -322,8 +321,7 @@ def _run_host_tool(call: ResponseFunctionToolCall, submit: Submit) -> str:
         args = json.loads(call.arguments)
         if not args.get("code", "").strip():
             raise ValueError("code must be a non-empty string")
-        submit(args["code"], args["summary"])
-        result = {"scheduled": True}
+        result = {"scheduled": True, "replaced": submit(args["code"], args["summary"])}
     except Exception as error:
         result = {"scheduled": False, "error": str(error)}
     return json.dumps(result)
@@ -367,11 +365,13 @@ class Slot:
         self.closed = False
         self.lock = Lock()
 
-    def submit(self, code: str, summary: str) -> None:
+    def submit(self, code: str, summary: str) -> str | None:
         with self.lock:
             if self.closed:
                 raise RuntimeError("This cell has finished; its call_me can no longer choose a cell")
+            replaced = self.summary
             self.code, self.summary = code, summary  # The last submission wins.
+            return replaced
 
     def close(self) -> None:
         with self.lock:
@@ -415,11 +415,6 @@ Repair the failure and continue the program.
         """
         with chdir(self.cwd or Path.cwd()), run_logger() as logger:
             env = env if env is not None else IPythonEnv()
-            env.bind(
-                openai_responses_api_docs=json.loads(
-                    files("agent_assets").joinpath("openai_responses_api_docs.json").read_text(encoding="utf-8")
-                )
-            )
             memory = Memory()
 
             def quit_() -> None:

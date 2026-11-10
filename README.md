@@ -58,9 +58,8 @@ Requires Python 3.12+ and `uv`.
    it sends the full context each round with `store=False`. To continue across calls, include the earlier
    input and returned `r.output` in the next `input`; `previous_response_id` is not supported.
    To receive encrypted reasoning for replay, pass `include=["reasoning.encrypted_content"]`.
-   The complete official Responses API reference is available offline in the REPL as
-   `openai_responses_api_docs` (page name → Markdown), including `methods/create`, `streaming-events`,
-   and `websocket-events`. The reference also documents stateful features that `call_me` does not support.
+   The agent is given that reference's URL and looks it up when needed; the reference also documents stateful
+   features that `call_me` does not support.
 
 2. Choose a startup mode and run it from the project root:
 
