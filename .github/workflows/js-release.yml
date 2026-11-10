@@ -1,0 +1,23 @@
+# Releases the JS package when js/package.json lands on main with a version higher than the last release.
+name: js-release
+on:
+  push:
+    branches: [main]
+    paths: [js/package.json]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # ponytail: the runner's preinstalled Node; add actions/setup-node when the build needs a pinned version.
+      - working-directory: js
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          new=$(node -p 'require("./package.json").version')
+          last=$(gh release list --json tagName -q '.[].tagName' | sed -n 's/^js-v//p' | sort -V | tail -1)
+          # Release only an upgrade: not the same version, and not a lower one.
+          [ "$new" != "$last" ] && [ "$(printf '%s\n' "$last" "$new" | sort -V | tail -1)" = "$new" ] || exit 0
+          npm ci && npm run release
