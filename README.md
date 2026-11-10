@@ -55,7 +55,8 @@ Requires Python 3.12+ and `uv`.
    Set `FIBONA_MODEL` to your model ID; it defaults to `gpt-6-astra`.
    Set `FIBONA_BASE_URL` to use an OpenAI-compatible gateway.
    `call_me` uses the [OpenAI Responses API](https://developers.openai.com/api/reference/resources/responses) in stateless mode:
-   it sends the full context each round with `store=False`. To continue across calls, include the earlier
+   it sends the full context each round with `store=False`. Returned `usage` sums the API-reported tokens,
+   cache details, and provider-reported cost across requests. To continue across calls, include the earlier
    input and returned `r.output` in the next `input`; `previous_response_id` is not supported.
    To receive encrypted reasoning for replay, pass `include=["reasoning.encrypted_content"]`.
    The complete official Responses API reference is available offline in the REPL as
