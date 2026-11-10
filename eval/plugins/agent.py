@@ -91,6 +91,8 @@ class Fibona(BaseInstalledAgent):
             raise ValueError(
                 "Fibona supports reasoning_effort medium/high/xhigh/max; select an agent that supports the requested effort"
             )
+        if "prompt_cache_key" in json.loads(env.get("FIBONA_EXTRA_BODY") or "{}"):
+            raise ValueError("Fibona generates a prompt_cache_key per process; remove it from extra_body")
         env["FIBONA_LOG_DIR"] = "/logs/agent"
         if (memory_mb := environment.task_env_config.memory_mb) is not None:
             instruction += (

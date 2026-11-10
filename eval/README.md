@@ -42,6 +42,10 @@ For adapters using the shared environment helper, explicit YAML values override 
 `model_settings.xxx` maps to `FIBONA_XXX` (objects use JSON), `model` to `FIBONA_MODEL`, and
 `base_url` to `FIBONA_BASE_URL`; supported settings depend on the adapter.
 
+The default agent starts a new `fibona.py` process for each trial attempt, and for each step of a multi-step task;
+each process sends its own `prompt_cache_key` (see the [README](../README.md)), so a retried trial gets a new one.
+The agent rejects a `prompt_cache_key` in `model_settings.extra_body`.
+
 ## Make targets
 
 - `make job CONFIG=...`: run one job; the only entry point.

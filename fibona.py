@@ -5,6 +5,7 @@ import os
 import sys
 from functools import partial
 from pathlib import Path
+from uuid import uuid4
 
 from openai import OpenAI
 
@@ -74,6 +75,8 @@ def main() -> int:
                 lowest_reasoning_effort=args.lowest_reasoning_effort,
                 reasoning_effort=args.reasoning_effort,
             )
+            # A new prompt_cache_key per process, sent with every call_me call; a call's own key wins.
+            mind.wake = partial(mind.wake, prompt_cache_key=uuid4().hex)
             env = IPythonEnv(stdout=sys.stdout, stderr=sys.stderr, read_input=input)
             env.bind(argv=remaining_args)  # Arguments this launcher did not consume, for the bootstrap to read.
             Agent(mind, cwd=".").run(bootstrap_cell, env=env)
