@@ -1,9 +1,10 @@
 // ↔ core/agent.py. Same semantics; only the cell language differs (JavaScript instead of Python), and what the
-// Python host does through the platform (working directory, log files, the docs asset) the caller supplies here.
+// Python host does through the platform (working directory, log files) the caller supplies here.
 
 import { type CellResult, JSEnv, Quit } from './env.js'
 import { APIError, type LogSink, type Logger, mergeExtraBody, runLogger, type Signal, uuid } from './utils.js'
 
+export * from './bootstrap.js'
 export * from './env.js'
 export * from './utils.js'
 
@@ -38,7 +39,8 @@ your memory.
 
 ## call_me
 
-\`call_me\` uses the OpenAI Responses API in stateless mode, with host-specific behavior defined in the code.
+\`call_me\` follows the standard OpenAI Responses API format, in stateless mode, with host-specific behavior defined
+in the code. For details, see https://developers.openai.com/api/reference/resources/responses.
 
 \`await call_me(input, params)\` wakes you and resolves to the Response (\`r.output_text\` for your reply, \`r.output\` for
 all items).
@@ -72,6 +74,7 @@ content, project progress, known facts, and anything else needed to continue the
 
 - A cell is the body of an async function: \`await\` works anywhere, and the cell ends when it returns.
   Always \`await call_me(...)\`; a cell that ends before you choose its next cell fails.
+- Cells share the host's one thread: avoid blocking synchronous work, and \`await\` or \`.catch\` every promise you start.
 - \`let\`, \`const\` and \`function\` declarations stay inside the cell. Assign globals to keep values:
   \`todos = []\`, \`globalThis.render = () => { ... }\`.
 
@@ -79,7 +82,6 @@ content, project progress, known facts, and anything else needed to continue the
 ## State
 
 - **Variables** persist. Inspect them with \`Object.keys(globalThis)\`; values are not automatically sent to you.
-- **\`openai_responses_api_docs\`**: the full OpenAI Responses API reference (page name -> Markdown); read relevant pages as needed.
 - **\`history\`**: one \`{code, summary, output, error, status}\` object per cell, including the current cell at the end.
   \`summary\` describes the cell's intent. \`output\` records stdout and stderr as of now.
   \`error\` records failures. \`status\` is \`running\`, \`completed\`, or \`error\`. Finished records are copies.
@@ -123,7 +125,8 @@ export const SET_NEXT_CELL = {
   },
 }
 
-export type Submit = (code: string, summary: string) => void
+/** Returns the summary of the submission it replaced, if any. */
+export type Submit = (code: string, summary: string) => string | null
 export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number]
 
@@ -301,8 +304,7 @@ function runHostTool(call: any, submit: Submit): string {
   try {
     const args = JSON.parse(call.arguments)
     if (!args.code?.trim()) throw new Error('code must be a non-empty string')
-    submit(args.code, args.summary)
-    return JSON.stringify({ scheduled: true })
+    return JSON.stringify({ scheduled: true, replaced: submit(args.code, args.summary) })
   } catch (error) {
     return JSON.stringify({ scheduled: false, error: (error as Error).message ?? String(error) })
   }
@@ -347,10 +349,12 @@ export class Slot {
   summary: string | null = null
   closed = false
 
-  submit = (code: string, summary: string): void => {
+  submit = (code: string, summary: string): string | null => {
     if (this.closed) throw new Error('This cell has finished; its call_me can no longer choose a cell')
+    const replaced = this.summary
     this.code = code // The last submission wins.
     this.summary = summary
+    return replaced
   }
 }
 
@@ -376,9 +380,7 @@ Repair the failure and continue the program.
    *
    * Startup policy, user tasks and UI composition belong in the supplied JavaScript code. Pass an environment for
    * input/output and an onCell callback to observe execution. Without them, the agent runs with captured output and
-   * no user input. onResult receives each cell's final validated result, including the cell that quits. apiDocs, the
-   * package's openai_responses_api_docs.json parsed, is bound as `openai_responses_api_docs`, which the instructions
-   * point to (core/agent.py loads it from agent_assets).
+   * no user input. onResult receives each cell's final validated result, including the cell that quits.
    * Aborting signal ends the run with its reason (core/: KeyboardInterrupt); after maxFailures cells fail in a row,
    * an Error ends the run.
    */
@@ -388,20 +390,16 @@ Repair the failure and continue the program.
       env = new JSEnv(),
       onCell,
       onResult,
-      apiDocs,
       signal,
     }: {
       env?: JSEnv
       onCell?: (number: number, summary: string, code: string) => void
       onResult?: (number: number, result: CellResult) => void
-      apiDocs: Record<string, string>
       signal?: Signal
-    },
+    } = {},
   ): Promise<void> {
-    if (apiDocs == null) throw new Error('apiDocs is required: the parsed fibona-agent/openai_responses_api_docs.json')
     const { maxFailures = 5, log } = this.opts
     const logger = runLogger(log)
-    env.bind({ openai_responses_api_docs: apiDocs })
     const memory = new Memory()
 
     let code = bootstrapCell

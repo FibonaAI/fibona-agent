@@ -14,15 +14,13 @@
       "types": "./dist/agent.d.ts",
       "import": "./dist/agent.js"
     },
-    "./global": "./dist/agent.global.js",
-    "./openai_responses_api_docs.json": "./openai_responses_api_docs.json"
+    "./global": "./dist/agent.global.js"
   },
   "files": [
-    "dist",
-    "openai_responses_api_docs.json"
+    "dist"
   ],
   "scripts": {
-    "build": "cp ../agent_assets/openai_responses_api_docs.json ../LICENSE . && tsup src/agent.ts --format esm,iife --global-name Fibona --minify --clean && tsc",
+    "build": "cp ../LICENSE . && tsup src/agent.ts --format esm,iife --global-name Fibona --minify --clean && tsc",
     "prepack": "npm run build",
     "release": "npm pack && gh release create js-v$npm_package_version fibona-agent-$npm_package_version.tgz --title \"fibona-agent (JS) $npm_package_version\" --notes-file README.md"
   },

@@ -48,7 +48,5 @@ export function runLogger(sink?: LogSink): (cell: number) => Logger {
     sink && ((event, data) => sink({ time: new Date().toISOString(), run_id: runId, cell, event, ...data }))
 }
 
-/** `uuid4().hex`. ponytail: Math.random where there is no crypto (bare JavaScriptCore); ids, not secrets. */
-export const uuid = (): string =>
-  (globalThis as any).crypto?.randomUUID?.().replaceAll('-', '') ??
-  Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
+/** `uuid4().hex`. ponytail: Math.random, which every host has; these are ids, not secrets. */
+export const uuid = (): string => Array.from({ length: 32 }, () => ((Math.random() * 16) | 0).toString(16)).join('')
