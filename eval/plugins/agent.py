@@ -17,6 +17,7 @@ from pathlib import Path
 from harbor.agents.capabilities import AgentCapabilities
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
 from harbor.utils.trajectory_utils import format_trajectory_json
+from plugins.mirrors import configure_package_mirrors
 from plugins.utils import convert
 from steps.config import ModelSettings
 
@@ -48,31 +49,42 @@ class Fibona(BaseInstalledAgent):
         seen = False
         incomplete = False
         for path in self.logs_dir.glob("*.jsonl"):
-            for line in path.read_text().splitlines():
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    self.logger.warning("Incomplete Fibona log record; usage totals are unknown")
-                    missing.update(totals)
-                    continue
-                if record.get("event") == "model_error":  # Rounds before the error are not logged with usage.
-                    missing.update(totals)
-                if record.get("event") != "model_response":
-                    continue
-                usage = record["response"].get("usage") or {}
-                incomplete = incomplete or bool(usage.get("incomplete"))
-                seen = True
-                values = {
-                    "n_input_tokens": usage.get("input_tokens"),
-                    "n_cache_tokens": (usage.get("input_tokens_details") or {}).get("cached_tokens"),
-                    "n_output_tokens": usage.get("output_tokens"),
-                    "cost_usd": usage.get("cost"),
-                }
-                for key, value in values.items():
-                    if value is None:
-                        missing.add(key)
-                    else:
-                        totals[key] += value
+            invalid_lines = []
+            # JSONL records end at LF; splitlines() also splits valid Unicode
+            # characters such as U+0085 inside JSON strings.
+            with path.open(encoding="utf-8") as lines:
+                for line_number, line in enumerate(lines, 1):
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        invalid_lines.append(line_number)
+                        missing.update(totals)
+                        continue
+                    if record.get("event") == "model_error":  # Rounds before the error are not logged with usage.
+                        missing.update(totals)
+                    if record.get("event") != "model_response":
+                        continue
+                    usage = record["response"].get("usage") or {}
+                    incomplete = incomplete or bool(usage.get("incomplete"))
+                    seen = True
+                    values = {
+                        "n_input_tokens": usage.get("input_tokens"),
+                        "n_cache_tokens": (usage.get("input_tokens_details") or {}).get("cached_tokens"),
+                        "n_output_tokens": usage.get("output_tokens"),
+                        "cost_usd": usage.get("cost"),
+                    }
+                    for key, value in values.items():
+                        if value is None:
+                            missing.add(key)
+                        else:
+                            totals[key] += value
+            if invalid_lines:
+                self.logger.warning(
+                    "Incomplete Fibona log records in %s at lines %s (%d total); usage totals are unknown",
+                    path,
+                    invalid_lines[:10],
+                    len(invalid_lines),
+                )
         if seen:
             for key, value in totals.items():
                 setattr(context, key, None if key in missing else value)
@@ -110,6 +122,7 @@ class Fibona(BaseInstalledAgent):
                         archive.add(source / name, arcname=name, filter=source_file)
 
             await asyncio.to_thread(pack_source)
+            await configure_package_mirrors(self, environment)
             await self.ensure_system_dependencies(environment, ("curl", "ca_certificates"))
             await environment.upload_file(archive_path, "/installed-agent/fibona-source.tar.gz")
         await self.exec_as_agent(

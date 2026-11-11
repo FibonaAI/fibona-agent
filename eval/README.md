@@ -19,6 +19,8 @@ A job records the code (commit and uncommitted patch) â†’ mirrors task images â†
 
 Both Fibona adapters upload the current local source during installation, including uncommitted changes.
 Task containers install uv, Python 3.12 and locked dependencies, so they need network access to download them.
+Both adapters switch Ubuntu official APT sources to the Huawei Cloud mirror before installing system dependencies, including legacy `.list` and deb822 `.sources` files.
+Fedora uses the Aliyun mirror; Fedora 42 and older use its archive, with package signature verification retained.
 No prebuilt wheel bundle or shared `/opt/fibona` mount is needed.
 
 ## Config

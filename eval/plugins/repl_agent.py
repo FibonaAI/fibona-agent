@@ -8,6 +8,7 @@ from harbor.agents.capabilities import AgentCapabilities
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
 from harbor.models.trajectories.final_metrics import FinalMetrics
 from harbor.utils.trajectory_utils import format_trajectory_json
+from plugins.mirrors import configure_package_mirrors
 from plugins.repl_trajectory import convert
 from steps.config import ModelSettings
 
@@ -138,6 +139,7 @@ class ReplAgent(BaseInstalledAgent):
         await environment.upload_file(str(agent), "/installed-agent/repl-agent/python/agent.py")
         for name in ("pyproject.toml", "uv.lock"):
             await environment.upload_file(str(SOURCE.parents[1] / name), f"/installed-agent/repl-agent/{name}")
+        await configure_package_mirrors(self, environment)
         await self.ensure_system_dependencies(environment, ("curl", "ca_certificates"))
         await self.exec_as_agent(
             environment,

@@ -98,6 +98,21 @@ are raised to it, including the default. The selected model must support the cho
 
 Each run automatically records cells and every model request, response, or error (including intermediate tool calls) in `logs/<timestamp>-<run-id>.jsonl`.
 
+For usage analysis, use the `api_request`, `api_response`, and `api_error` events. Each SDK call has a unique
+`api_call_id`; `request_id` links calls belonging to the same logical operation, and `api_call_index` identifies
+its internal rounds. `api_request.request` contains the complete parameters passed to the SDK;
+`api_response.response` contains the complete SDK response JSON, without content truncation or logical-round merging.
+`api_stream_event.stream_event` records each consumed streaming event, in order, including text/tool-call deltas
+and terminal responses. HTTP error bodies, when supplied by the SDK, are retained in `api_error.response_body`.
+These are SDK payloads, not a raw HTTP wire capture; authentication headers and API keys are not recorded.
+`api_response` also records the original per-call `usage` (including provider-specific cache,
+reasoning, and cost fields when present), response/model/status, provider request ID, and elapsed seconds before
+logical usage is merged. Streaming usage is recorded when a completed, incomplete, or failed response event is consumed.
+An `api_incomplete` event, or a request without a terminal event, means usage is unknown, not zero. SDK-internal
+HTTP retries are not separate API-call events. Do not add these usage records to the legacy `model_response`
+logical summaries: doing so would double-count usage. Provider cost fields can be absent; no price estimate is
+inserted into the raw usage.
+
 ## Use the core as a library
 
 From another `uv` project, add a local checkout:

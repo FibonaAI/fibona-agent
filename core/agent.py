@@ -7,6 +7,7 @@ from functools import partial
 from importlib.resources import files
 from pathlib import Path
 from threading import Lock
+from time import monotonic
 from uuid import uuid4
 
 from openai import APIError, OpenAI, Stream
@@ -222,10 +223,12 @@ class Mind:
         usage_incomplete = False  # Whether any round omitted usage.
         metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_me"}
         log_info(logger, "model_request", **metadata, request={**body, "input": items})
+        api_call_index = 0
         while True:
             request = {**body, "input": items}
+            api_call_index += 1
             try:
-                response = self.client.responses.create(**request)
+                response = _create_response(self.client, request, logger, metadata, api_call_index)
                 if response.status == "failed":  # Provider errors can arrive after generation begins.
                     raise APIError(f"Response {response.id} failed: {response.error}", request=None, body=None)
             except BaseException as exc:
@@ -274,7 +277,7 @@ class Mind:
         metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_llm_api"}
         log_info(logger, "model_request", **metadata, request=request)
         try:
-            response = self.client.responses.create(**request)
+            response = _create_response(self.client, request, logger, metadata, 1)
         except BaseException as exc:
             log_info(logger, "model_error", **metadata, error={"type": type(exc).__name__, "message": str(exc)})
             raise
@@ -283,6 +286,86 @@ class Mind:
         else:
             log_info(logger, "model_stream_created", **metadata)
         return response
+
+
+def _create_response(client, request, logger, logical_metadata, index):
+    """Log each SDK invocation separately, before logical-wake usage is merged.
+
+    SDK-internal HTTP retries are part of this invocation, not separate events.
+    An api_request without a terminal event has unknown usage (e.g. a killed
+    process or a stream the caller never consumed). Never interpret it as zero.
+    """
+    metadata = {
+        "request_id": logical_metadata["request_id"],
+        "api_call_id": uuid4().hex,
+        "api_call_index": index,
+        "started_at": datetime.now(UTC).isoformat(),
+        "source": logical_metadata["source"],
+    }
+    started = monotonic()
+    log_info(logger, "api_request", **metadata, request=request)
+
+    def log_response(response):
+        log_info(
+            logger,
+            "api_response",
+            **metadata,
+            duration_seconds=monotonic() - started,
+            response_id=response.id,
+            provider_request_id=getattr(response, "_request_id", None),
+            model=response.model,
+            status=response.status,
+            service_tier=getattr(response, "service_tier", None),
+            usage=response.usage,
+            error=response.error,
+            response=response,
+        )
+
+    def log_error(exc):
+        log_info(
+            logger,
+            "api_error",
+            **metadata,
+            duration_seconds=monotonic() - started,
+            provider_request_id=getattr(exc, "request_id", None),
+            status_code=getattr(exc, "status_code", None),
+            response_body=getattr(exc, "body", None),
+            error={"type": type(exc).__name__, "message": str(exc)},
+        )
+
+    try:
+        response = client.responses.create(**request)
+    except BaseException as exc:
+        log_error(exc)
+        raise
+    if isinstance(response, Response):
+        log_response(response)
+    elif logger is not None:
+        # Preserve the original Stream, including its context manager and close
+        # behavior. Both next(stream) and iteration use the SDK's _iterator.
+        iterator = response._iterator
+
+        def logged_events():
+            terminal = False
+            try:
+                for event in iterator:
+                    log_info(logger, "api_stream_event", **metadata, stream_event=event)
+                    if event.type in {"response.completed", "response.incomplete", "response.failed"}:
+                        log_response(event.response)
+                        terminal = True
+                    yield event
+            except GeneratorExit:
+                raise
+            except BaseException as exc:
+                terminal = True
+                log_error(exc)
+                raise
+            finally:
+                if not terminal:
+                    log_info(logger, "api_incomplete", **metadata, duration_seconds=monotonic() - started)
+
+        response._iterator = logged_events()
+    return response
 
 
 def _add_usage(total, current):
