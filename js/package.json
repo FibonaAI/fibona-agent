@@ -1,6 +1,6 @@
 {
   "name": "fibona-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Fibona's core in JavaScript: the model writes the next cell of the program it runs in.",
   "license": "MIT",
   "repository": {
@@ -17,7 +17,8 @@
     "./global": "./dist/agent.global.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "build": "cp ../LICENSE . && tsup src/agent.ts --format esm,iife --global-name Fibona --minify --clean && tsc",
