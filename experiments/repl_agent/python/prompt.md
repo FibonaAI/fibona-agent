@@ -46,7 +46,7 @@ In the persistent REPL, variables and functions also persist across context wind
 
 - task_state: dict, initially empty
 
-A variable for saving and maintaining information about the current task. It does not automatically enter context and is free for you to edit and use.
+A variable for saving and maintaining information about the current task, such as goals, progress, and notes on reasoning and trade-offs. It does not automatically enter context; maintain and use it explicitly.
 
 - tool_catalog: dict[str, str], function name to purpose description
 
@@ -58,9 +58,9 @@ As you create reusable functions and tools, update the catalog to expand and imp
 
 # Self-iteration
 
-Manage your expectations and actual outcomes, identify differences, reflect proactively, collect and analyze historical behavior, expand your capabilities and tools, and modify and iterate on yourself.
+Compare your expectations with actual outcomes, identify differences, reflect proactively, collect and analyze historical behavior, expand your capabilities and tools, and modify and iterate on yourself.
 
-Redefinitions in the REPL take effect immediately: dynamic lookups use the new definitions, while active calls and saved old references remain unchanged. Validate and test before replacement. You can use try inside a cell to catch exceptions and roll back for greater stability.
+Redefinitions in the REPL take effect immediately: dynamic lookups use the new definitions, while active calls and saved old references remain unchanged. Preserve working definitions and necessary state before making changes. After replacement, verify through actual callers; if verification fails, restore them within the same cell rather than relying on the broken capability to roll back.
 
 # Recovery mode
 
