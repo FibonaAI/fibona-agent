@@ -523,9 +523,12 @@ async def request_model(input, **options):
     global client
     if client is None:
         client = AsyncOpenAI(max_retries=api_retries)
+    scope = operation.get()
+    log = scope["log"] if scope else session
     settings = {
         "parallel_tool_calls": False,
         "store": False,
+        "prompt_cache_key": log.records[0]["session_id"],
         **model_options,
         "instructions": "\n\n".join(f"# {name}\n{text}" for name, text in instructions.items()),
         "tools": [cell_tool],

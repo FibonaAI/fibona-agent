@@ -56,6 +56,8 @@ Resuming a session reloads its recorded history without replaying old code. Vari
 
 Model request defaults are grouped at the top of each agent in `model_options`; `context_window` sets the local context budget. Check both when changing models or providers. Other options can be changed in the agent source.
 
+Requests default `prompt_cache_key` to the owning session’s ID, keeping it stable across context resets, retries, recovery and session resume. Set `prompt_cache_key` in `model_options` or pass it to `request_model` to override this default; per-request options take precedence. Cache reuse depends on the model service and matching prompt content.
+
 ## Implementations
 
 Each language keeps its launcher, REPL and complete agent together:

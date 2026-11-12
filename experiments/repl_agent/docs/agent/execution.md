@@ -13,6 +13,8 @@ Part of the [agent design](README.md). Raw model access, recorded requests and r
 
 Model settings and tool definitions remain editable. Read current settings for each request; later edits affect subsequent requests. The recorded diagnostics must describe the request actually sent rather than settings changed during its wait.
 
+By default, model requests use their owning session’s stable identity as the prompt cache key. Context reset, retries, recovery and loading the same persisted session preserve this default; a new session has its own key. An active operation keeps its session association across global rebinding; requests outside an operation use the current session. Model settings or explicit request options may override the key. The key is a provider hint and does not guarantee a cache hit.
+
 ## Accepting model output
 
 The model acts through `run_cell`, which executes source in the persistent language environment. A call supplies code and can set a time budget for that execution; otherwise the editable agent default applies.

@@ -28,6 +28,7 @@ Deadline behavior is limited by platform interruption support. Native code and c
 | Scenario | Evidence |
 | --- | --- |
 | Fail request recording, change settings during a request, or restart a persisted session without a recorded outcome | A failed start prevents sending; the pre-send configuration snapshot stays unchanged; an absent outcome remains unknown and startup does not resend the request |
+| Request across context reset, retries, recovery, session reload or global session rebinding; override the cache key | Default prompt cache key follows the owning session, survives reload/reset, differs for a new session and yields to explicit settings |
 | Receive incomplete/failed output with apparent calls | No partial effects; bounded policy retries or propagates; attempts remain inspectable |
 | Receive missing/duplicate call identities or unsupported arguments | No ambiguous pairing or invalid execution; identifiable rejected calls receive errors |
 | Receive opaque provider items or optional metadata | Accepted data remains usable through storage and subsequent projection |

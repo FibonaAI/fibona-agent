@@ -303,8 +303,9 @@ var validate_output = function validate_output(output) {
  * Returns the Responses API JSON object. Options override defaults. HTTP failures propagate.
  */
 var request_model = async function request_model(input, options = {}) {
+  const log = operation.getStore()?.log ?? session;
   const settings = {
-    parallel_tool_calls: false, store: false, ...model_options,
+    parallel_tool_calls: false, store: false, prompt_cache_key: log.records[0].session_id, ...model_options,
     instructions: Object.entries(instructions).map(([name, text]) => `# ${name}\n${text}`).join("\n\n"),
     tools: [cell_tool], ...options, input,
   };
