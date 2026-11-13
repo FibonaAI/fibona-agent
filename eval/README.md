@@ -42,6 +42,10 @@ For adapters using the shared environment helper, explicit YAML values override 
 `model_settings.xxx` maps to `FIBONA_XXX` (objects use JSON), `model` to `FIBONA_MODEL`, and
 `base_url` to `FIBONA_BASE_URL`; supported settings depend on the adapter.
 
+The default agent sends each trial's Harbor id as a `session-id` request header (through `OPENAI_CUSTOM_HEADERS`), so
+a third-party gateway that keeps a session on one upstream account can keep a trial's requests together. A retried
+trial gets a new id; the steps of a multi-step task share one.
+
 ## Make targets
 
 - `make job CONFIG=...`: run one job; the only entry point.

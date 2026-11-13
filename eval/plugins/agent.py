@@ -94,6 +94,8 @@ class Fibona(BaseInstalledAgent):
                 "Fibona supports reasoning_effort medium/high/xhigh/max; select an agent that supports the requested effort"
             )
         env["FIBONA_LOG_DIR"] = "/logs/agent"
+        # Sent with every request of the process, so a gateway can keep the trial's requests on one upstream account.
+        env["OPENAI_CUSTOM_HEADERS"] = f"session-id: {self.context_id}"
         if (memory_mb := environment.task_env_config.memory_mb) is not None:
             instruction += (
                 f"\n\nDeclared memory budget for this task's agent container: {memory_mb} MiB. "
