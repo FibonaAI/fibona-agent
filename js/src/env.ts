@@ -23,13 +23,14 @@ export type ReadInput = (prompt?: string) => string | Promise<string>
  * A session at global scope (IPythonEnv's): runs cells as bodies of async functions, so `await` works anywhere;
  * the globals they assign persist across cells, while `let`, `const` and `function` declarations stay inside.
  *
- * Output is always captured; optional streams also receive it live. User input requires an injected readInput
- * handler, so the environment does not depend on a console.
+ * Output is always captured; optional streams also receive it live. A host that gives `debug` gets console.* there
+ * instead of on stdout/stderr, leaving stdout to print alone. User input requires an injected readInput handler, so
+ * the environment does not depend on a console.
  *
  * A cell that blocks or crashes the host takes the agent down with it.
  */
 export class JSEnv {
-  constructor(readonly opts: { stdout?: Write; stderr?: Write; readInput?: ReadInput } = {}) {}
+  constructor(readonly opts: { stdout?: Write; stderr?: Write; debug?: Write; readInput?: ReadInput } = {}) {}
 
   /** Put names (call_me, quit, ...) into the cells' global scope, replacing old ones. */
   // ponytail: globalThis is the session, so every JSEnv in a realm shares it; one realm (vm, iframe, Worker) per agent.
@@ -64,12 +65,14 @@ export class JSEnv {
         onOutput?.(text)
       }
     const [stdout, stderr] = [tee(this.opts.stdout), tee(this.opts.stderr)]
+    const debug = this.opts.debug && tee(this.opts.debug)
+    const [log, warn] = [debug ?? stdout, debug ?? stderr]
     // redirect_stdout/redirect_stderr: the console is the cell's while it runs, the host's again after.
     const hostConsole = (globalThis as any).console
     this.bind({
       input: this.opts.readInput ?? unavailableInput, // Rebound every cell, so a replaced `input` does not persist.
       print: stdout,
-      console: { ...hostConsole, log: stdout, info: stdout, debug: stdout, warn: stderr, error: stderr },
+      console: { ...hostConsole, log, info: log, debug: log, warn, error: warn },
     })
     let onAbort = () => {}
     const aborted = new Promise<never>((_, reject) => (onAbort = () => reject(signal!.reason)))
