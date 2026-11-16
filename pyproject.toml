@@ -23,10 +23,7 @@ build-backend = "setuptools.build_meta"
 py-modules = ["fibona"]
 
 [tool.setuptools.packages.find]
-include = ["core", "bootstraps", "bootstraps.*", "agent_assets"]
-
-[tool.setuptools.package-data]
-agent_assets = ["*.json"]
+include = ["core", "bootstraps", "bootstraps.*"]
 
 [dependency-groups]
 dev = [

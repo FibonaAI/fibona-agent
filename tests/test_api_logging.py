@@ -47,7 +47,7 @@ class ApiLoggingTests(unittest.TestCase):
     def records(self, event):
         return [r for line in self.buffer.getvalue().splitlines() if (r := json.loads(line))["event"] == event]
 
-    def test_wake_records_each_round_without_changing_logical_usage(self):
+    def test_wake_records_each_round_and_sums_api_usage(self):
         call = ResponseFunctionToolCall.model_construct(
             id="fc1",
             type="function_call",
@@ -56,7 +56,7 @@ class ApiLoggingTests(unittest.TestCase):
             arguments=json.dumps({"code": "print(1)", "summary": "test"}),
         )
         self.client.responses.create.side_effect = [response("r1", output=[call]), response("r2", tokens=200)]
-        result = self.mind.wake("test", submit=Mock(), logger=self.logger)
+        result = self.mind.wake("test", submit=Mock(return_value=None), logger=self.logger)
         requests, replies = self.records("api_request"), self.records("api_response")
         self.assertEqual([r["usage"]["input_tokens"] for r in replies], [100, 200])
         self.assertEqual([r["api_call_index"] for r in replies], [1, 2])
@@ -72,7 +72,7 @@ class ApiLoggingTests(unittest.TestCase):
         self.assertEqual(requests[1]["request"]["input"][-1]["type"], "function_call_output")
         self.assertIn("instructions", requests[0]["request"])
         self.assertIn("tools", requests[0]["request"])
-        self.assertEqual(result.usage.input_tokens, 100)
+        self.assertEqual(result.usage.input_tokens, 300)
         self.assertEqual(result.usage.output_tokens, 20)
         self.assertEqual(len(self.records("model_response")), 1)
 
@@ -86,7 +86,7 @@ class ApiLoggingTests(unittest.TestCase):
         )
         self.client.responses.create.side_effect = [response("r1", output=[call]), RuntimeError("offline")]
         with self.assertRaisesRegex(RuntimeError, "offline"):
-            self.mind.wake("test", submit=Mock(), logger=self.logger)
+            self.mind.wake("test", submit=Mock(return_value=None), logger=self.logger)
         self.assertEqual(len(self.records("api_response")), 1)
         self.assertEqual(self.records("api_error")[0]["api_call_index"], 2)
         self.assertFalse(self.records("model_response"))
@@ -94,7 +94,7 @@ class ApiLoggingTests(unittest.TestCase):
     def test_failed_response_usage_is_recorded_before_wake_raises(self):
         self.client.responses.create.return_value = response("failed", status="failed")
         with self.assertRaises(APIError):
-            self.mind.wake("test", submit=Mock(), logger=self.logger)
+            self.mind.wake("test", submit=Mock(return_value=None), logger=self.logger)
         self.assertEqual(self.records("api_response")[0]["status"], "failed")
         self.assertEqual(self.records("api_response")[0]["usage"]["input_tokens"], 100)
 

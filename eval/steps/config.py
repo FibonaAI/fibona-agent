@@ -1,4 +1,5 @@
-"""Job configs (see example.yaml); once its workers exist, a job's groups are all fixed hosts and it yields Harbor's arguments."""
+"""Job configs (see *.example.yaml): `local` runs on this machine alone, `groups` on a cluster. Once its workers exist,
+a cluster job's groups are all fixed hosts and it yields Harbor's arguments."""
 
 import json
 import os
@@ -9,7 +10,7 @@ from typing import Literal
 
 from plugins.hosts import Resources, SSHSettings
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, NonNegativeInt, PositiveInt, model_validator
-from steps.workers import ECSSpec
+from steps.workers import HOMES, REGION, ECSSpec
 
 
 class ModelSettings(BaseModel):
@@ -58,11 +59,34 @@ class JobConfig(BaseModel):
     model: str  # As `harbor run -m` takes it, e.g. openai/gpt-6-astra.
     agent: str = Field(default="plugins.agent:Fibona", min_length=1)  # Harbor name or module:Class.
     model_settings: ModelSettings = ModelSettings()
-    settings: SSHSettings  # Shared SSH login, private key path and port for Harbor.
-    groups: list[JobGroup] = Field(min_length=1)  # First matching group supplies the task's hosts.
+    # Exactly one of local and groups. local: this machine alone, in its Docker as the current user, no SSH.
+    local: Resources | None = None  # Scheduling budget on this machine.
+    settings: SSHSettings | None = None  # groups only: shared SSH login, private key path and port.
+    groups: list[JobGroup] = []  # A cluster; first matching group supplies the task's hosts.
+    # Task images are mirrored here before the run and pulled from here, local or cluster; every machine's Docker
+    # must be logged in to it. Without it, tasks pull from upstream.
+    registry: str | None = None
+    region: str = REGION  # Of the ECS workers and vePFS; outside cn-beijing, job.py reaches workers over their EIPs.
+    vepfs: str | None = (
+        None  # groups only: a mount service, e.g. mount-f9c28f8d; ECS workers mount it (steps/workers.py).
+    )
     exclude: list[str] = []  # Task name globs to skip.
     limit: PositiveInt | None = None  # At most this many tasks, after filtering.
     extra_args: list[str] = []  # Passed to `harbor run` as is, e.g. ["--timeout-multiplier", "2"].
+
+    @model_validator(mode="after")
+    def one_mode(self) -> "JobConfig":
+        if bool(self.local) == bool(self.groups):
+            raise ValueError("Give either local (this machine alone) or groups (a cluster).")
+        if self.local and (self.settings or self.vepfs):
+            raise ValueError("local runs without SSH or workers; drop settings and vepfs.")
+        if self.groups and not self.settings:
+            raise ValueError("groups need settings.")
+        if self.vepfs and self.region not in HOMES:
+            raise ValueError(f"No vePFS home directory known for {self.region}; add it to steps/workers.py HOMES.")
+        if self.registry and self.region != REGION:
+            raise ValueError(f"The registry is in {REGION}; outside it, drop registry and pull from upstream.")
+        return self
 
     def run_name(self) -> str:
         return datetime.now(UTC).strftime("%Y-%m-%d-%H%M%S-") + self.name
@@ -82,25 +106,24 @@ class JobConfig(BaseModel):
         return ssh_command(self.settings, host)
 
     def harbor_args(self, job_dir: Path) -> list[str]:
-        """`harbor run` arguments: every task scheduled on these hosts through plugins.hosts."""
+        """`harbor run` arguments: every task scheduled through plugins.hosts, on these hosts or, for local, in this
+        machine's Docker."""
         args = ["run", "-y", "-d", self.dataset, "-m", self.model, "-a", self.agent]
         for key, value in self.model_settings.model_dump(exclude_none=True).items():
             args += ["--ak", f"{key}={json.dumps(value)}"]
-        args += ["--env", "plugins.hosts:SSHHosts"]
-        args += ["--ek", "settings=" + json.dumps(self.settings.model_dump(mode="json"))]
-        args += [
-            "--plugin",
-            "plugins.hosts:HostPool",
-            "--plugin-kwarg",
-            "groups=" + json.dumps([g.model_dump(exclude={"ecs"}) for g in self.groups]),
-        ]
+        if self.local:
+            args += ["--env", "plugins.hosts:LocalDocker"]
+            groups = [{"hosts": {"localhost": self.local.model_dump()}}]
+        else:
+            args += ["--env", "plugins.hosts:SSHHosts"]
+            args += ["--ek", "settings=" + json.dumps(self.settings.model_dump(mode="json"))]
+            groups = [g.model_dump(exclude={"ecs"}) for g in self.groups]
+        if self.registry:
+            args += ["--ek", "registry=" + json.dumps(self.registry)]
+        args += ["--plugin", "plugins.hosts:HostPool", "--plugin-kwarg", "groups=" + json.dumps(groups)]
         # One CPU per trial is the broad upper bound; HostPool applies each task's actual resource demand.
-        args += [
-            "-n",
-            str(sum(host.cpus for host in self.hosts.values())),
-            "--max-retries",
-            "2",
-        ]
+        cpus = self.local.cpus if self.local else sum(host.cpus for host in self.hosts.values())
+        args += ["-n", str(cpus), "--max-retries", "2"]
         args += ["--jobs-dir", str(job_dir / "jobs"), "--job-name", job_dir.name]
         # Harbor package filters match org/task, while group patterns use the short task name.
         prefix = "*/" if "/" in self.dataset.split("@", 1)[0] else ""

@@ -4,7 +4,7 @@ Evaluates Fibona on Harbor datasets and archives every run. One config is one jo
 `experiments/<run>/`, where `<run>` is `<UTC time>-<name>`.
 
 ```bash
-cp eval/example.yaml ~/fibona-eval-configs/my-job.yaml   # Configs live outside the repo.
+cp eval/cluster.beijing.example.yaml ~/fibona-eval-configs/my-job.yaml   # Or local.example.yaml; configs live outside the repo.
 make -C eval job CONFIG=~/fibona-eval-configs/my-job.yaml
 ```
 
@@ -25,7 +25,7 @@ No prebuilt wheel bundle or shared `/opt/fibona` mount is needed.
 
 ## Config
 
-See `example.yaml` for a full example; unknown keys are rejected.
+See `local.example.yaml` (one machine), `cluster.beijing.example.yaml` (ECS workers or fixed hosts) and `cluster.johor.example.yaml` (ECS workers in ap-southeast-1); unknown keys are rejected.
 
 | Key | Meaning |
 |---|---|
@@ -34,8 +34,12 @@ See `example.yaml` for a full example; unknown keys are rejected.
 | `dataset` / `model` | As `harbor run -d` / `-m` take them. |
 | `agent` | Optional Harbor agent name or importable `module:Class`; defaults to `plugins.agent:Fibona`. |
 | `model_settings` | Optional: `reasoning_effort`, `lowest_reasoning_effort`, `api_retries`, `extra_body` (JSON request extensions). |
-| `settings` | SSH user, key and port; `registry` is where task images are mirrored. |
-| `groups` | Where tasks run: either `hosts` (fixed hosts with resource budgets) or `ecs` (workers launched for the job). `tasks` globs match in order; empty is the catch-all. |
+| `registry` | Optional: task images are mirrored here before the run and pulled from here, local or cluster; every machine's Docker must be logged in to it. Without it, tasks pull from upstream. |
+| `region` | Optional, default `cn-beijing`: where ECS workers and vePFS live. Elsewhere workers are reached over their EIPs and `registry` is not allowed. |
+| `vepfs` | Optional, cluster jobs: a vePFS mount service; ECS workers mount it at `/vepfs` and its MLP home directory at `/home/users`. |
+| `local` | Single machine: run on this machine alone, in its Docker as the current user, within this budget (`cpus`, `memory_mb`, `gpus`). No SSH; replaces `settings` and `groups`. |
+| `settings` | Cluster jobs: SSH user, key and port. |
+| `groups` | Cluster jobs: where tasks run, either `hosts` (fixed hosts with resource budgets) or `ecs` (workers launched for the job). `tasks` globs match in order; empty is the catch-all. |
 | `exclude` / `limit` | Tasks to skip / at most this many tasks. |
 | `extra_args` | Passed to `harbor run` as is. |
 
@@ -48,11 +52,15 @@ Other `model_settings.xxx` values map to `FIBONA_XXX` (objects use JSON), and `m
 supported settings depend on the adapter. Set the API endpoint only through `FIBONA_BASE_URL`.
 Existing configs with `base_url` must move that value to the environment and remove the YAML field.
 
+The default agent sends each trial's Harbor id as a `session-id` request header (through `OPENAI_CUSTOM_HEADERS`), so
+a third-party gateway that keeps a session on one upstream account can keep a trial's requests together. A retried
+trial gets a new id; the steps of a multi-step task share one.
+
 ## Make targets
 
 - `make job CONFIG=...`: run one job; the only entry point.
 - `make bin/crane`: run by `job`; rarely needed on its own.
-- `make image HOST=... KEY=... PUBKEY=...`: build a new CPU worker image.
+- `make image HOST="<ip> ..." KEY=... PUBKEY=...`: build a new CPU worker image, one host per region.
 
 ## Results and stopping
 

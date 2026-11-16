@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import tomllib
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -75,14 +76,14 @@ def ensure(image: str, target: str, env: dict) -> str:
     return "copied"
 
 
-def ensure_images(config: JobConfig, out: Path) -> None:
-    """Mirror the images of the tasks the job selects."""
-    registry = config.settings.registry
+def ensure_images(config: JobConfig, out: Path, log: Callable[[str], None]) -> None:
+    """Mirror the images of the tasks the job selects, logging copies, failures and a summary through log(message)."""
+    registry = config.registry
     if not registry:
-        print("No settings.registry; tasks pull images from upstream.")
+        log("no registry; tasks pull images from upstream")
         return
-    patterns = [group.tasks for group in config.groups]
-    include = None if not all(patterns) else [pattern for group in patterns for pattern in group]
+    patterns = [group.tasks for group in config.groups]  # A local job has none: no filter, as with a catch-all.
+    include = [pattern for group in patterns for pattern in group] if patterns and all(patterns) else None
     exclude = config.exclude
     images = defaultdict(list)
     for root in asyncio.run(download(config.dataset)):
@@ -114,7 +115,8 @@ def ensure_images(config: JobConfig, out: Path) -> None:
                 entry["status"] = ensure(image, target, env)
             except (RuntimeError, subprocess.TimeoutExpired) as error:
                 entry["status"], entry["error"] = "failed", str(error)
-            print(f"{entry['status']:8} {image}", flush=True)
+            if entry["status"] != "present":
+                log(f"{entry['status']} {image}" + (f": {entry['error']}" if "error" in entry else ""))
             return image, entry
 
         with ThreadPoolExecutor(max_workers=8) as pool:
@@ -124,6 +126,6 @@ def ensure_images(config: JobConfig, out: Path) -> None:
                     failed.append(image)
     out.write_text(json.dumps(inventory, indent=2) + "\n")
     counts = {status: sum(e["status"] == status for e in inventory.values()) for status in ("present", "copied")}
-    print(f"Images: {counts['present']} present, {counts['copied']} copied, {len(failed)} failed; see {out}")
+    log(f"{counts['present']} present, {counts['copied']} copied, {len(failed)} failed; see {out}")
     if failed:
         raise RuntimeError(f"{len(failed)} images failed to mirror: {', '.join(failed)}")

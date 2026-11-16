@@ -4,7 +4,6 @@ from collections.abc import Callable
 from contextlib import chdir
 from datetime import UTC, datetime
 from functools import partial
-from importlib.resources import files
 from pathlib import Path
 from threading import Lock
 from time import monotonic
@@ -47,7 +46,8 @@ your memory.
 
 ## call_me
 
-`call_me` uses the OpenAI Responses API in stateless mode, with host-specific behavior defined in the code.
+`call_me` follows the standard OpenAI Responses API format, in stateless mode, with host-specific behavior defined
+in the code. For details, see https://developers.openai.com/api/reference/resources/responses.
 
 `call_me(input, **params)` wakes you and returns the Response (`r.output_text` for your reply, `r.output` for
 all items).
@@ -79,7 +79,6 @@ content, project progress, known facts, and anything else needed to continue the
 ## State
 
 - **Variables** persist. Inspect them with `globals()`; values are not automatically sent to you.
-- **`openai_responses_api_docs`**: the full OpenAI Responses API reference (page name -> Markdown); read relevant pages as needed.
 - **`history`**: one `{code, summary, output, error, status}` dict per cell, including the current cell at the end.
   `summary` describes the cell's intent. `output` records stdout and stderr as of now.
   `error` records failures. `status` is `running`, `completed`, or `error`. Finished records are copies.
@@ -124,7 +123,7 @@ SET_NEXT_CELL = {
     },
 }
 
-Submit = Callable[[str, str], None]
+Submit = Callable[[str, str], str | None]  # Returns the summary of the submission it replaced, if any.
 REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
@@ -163,8 +162,8 @@ class Mind:
         """Wake the mind. Exposed to cells as `call_me`.
 
         The returned output contains every round's items and host tool results, in order.
-        Usage treats the wake as one logical request: keep the first reported input usage,
-        sum output usage, and recompute total_tokens. Its custom `incomplete` flag is True
+        Usage sums every API request's reported tokens and cache details, including replayed
+        input, for cost accounting. Its custom `incomplete` flag is True
         if any round omits usage; these partial counts are not a complete wake total.
         It is None only if no round reports usage.
         Other Response fields (id, status, etc.) describe the final API response.
@@ -369,21 +368,34 @@ def _create_response(client, request, logger, logical_metadata, index):
 
 
 def _add_usage(total, current):
-    """Keep initial input usage and accumulate generated output for one logical wake."""
+    """Sum actual API usage, including cache details and provider-reported cost."""
     if current is None:
         return total
     if total is None:
         return current.model_copy(deep=True)
-    total.output_tokens += current.output_tokens
-    total.total_tokens = total.input_tokens + total.output_tokens
-    details, incoming = total.output_tokens_details, current.output_tokens_details
-    for key in type(details).model_fields:
-        a, b = getattr(details, key, None), getattr(incoming, key, None)
-        setattr(details, key, a + b if a is not None and b is not None else None)
+    for key in ("input_tokens", "output_tokens", "total_tokens"):
+        setattr(total, key, getattr(total, key) + getattr(current, key))
+    for field in ("input_tokens_details", "output_tokens_details"):
+        details, incoming = getattr(total, field, None), getattr(current, field, None)
+        if details is None or incoming is None:
+            setattr(total, field, None)
+        else:
+            setattr(
+                total,
+                field,
+                type(details).model_construct(**_sum_token_details(details.model_dump(), incoming.model_dump())),
+            )
     if hasattr(total, "cost"):  # Actual provider cost still includes every round.
         a, b = total.cost, getattr(current, "cost", None)
         total.cost = a + b if a is not None and b is not None else None
     return total
+
+
+def _sum_token_details(a, b):
+    """Include nested cache-write counters; missing values remain unknown."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        return {key: _sum_token_details(a.get(key), b.get(key)) for key in a.keys() | b.keys()}
+    return a + b if type(a) is int and type(b) is int else None
 
 
 def _input_items(value) -> list:
@@ -405,8 +417,7 @@ def _run_host_tool(call: ResponseFunctionToolCall, submit: Submit) -> str:
         args = json.loads(call.arguments)
         if not args.get("code", "").strip():
             raise ValueError("code must be a non-empty string")
-        submit(args["code"], args["summary"])
-        result = {"scheduled": True}
+        result = {"scheduled": True, "replaced": submit(args["code"], args["summary"])}
     except Exception as error:
         result = {"scheduled": False, "error": str(error)}
     return json.dumps(result)
@@ -450,11 +461,13 @@ class Slot:
         self.closed = False
         self.lock = Lock()
 
-    def submit(self, code: str, summary: str) -> None:
+    def submit(self, code: str, summary: str) -> str | None:
         with self.lock:
             if self.closed:
                 raise RuntimeError("This cell has finished; its call_me can no longer choose a cell")
+            replaced = self.summary
             self.code, self.summary = code, summary  # The last submission wins.
+            return replaced
 
     def close(self) -> None:
         with self.lock:
@@ -498,11 +511,6 @@ Repair the failure and continue the program.
         """
         with chdir(self.cwd or Path.cwd()), run_logger() as logger:
             env = env if env is not None else IPythonEnv()
-            env.bind(
-                openai_responses_api_docs=json.loads(
-                    files("agent_assets").joinpath("openai_responses_api_docs.json").read_text(encoding="utf-8")
-                )
-            )
             memory = Memory()
 
             def quit_() -> None:

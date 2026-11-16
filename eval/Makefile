@@ -1,4 +1,4 @@
-# Everything is a job: make job CONFIG=<config.yaml>, starting from example.yaml. See job.py.
+# Everything is a job: make job CONFIG=<config.yaml>, starting from local.example.yaml or cluster.*.example.yaml. See job.py.
 
 # Pinned tools; uv fetches and caches the Python ones on first use, crane mirrors task images.
 HARBOR_VERSION := 0.24.0
@@ -13,10 +13,11 @@ export UV_DEFAULT_INDEX := $(PYPI_INDEX)
 need = $(foreach v,$1,$(if $($v),,$(error $v is required)))
 
 .PHONY: job image viz
+.SILENT: job
 
 # Run one benchmark job end to end and archive it: mirror task images, launch ECS workers,
 # run Harbor, delete the workers, upload experiments/<run>/ to the config's TOS archive.
-# Usage: make job CONFIG=/path/to/config.yaml        (start from example.yaml; relative paths are from eval/)
+# Usage: make job CONFIG=/path/to/config.yaml        (start from an *.example.yaml; relative paths are from eval/)
 # Workers are deleted however the job ends; only a SIGKILLed job leaves them, tagged fibona-job=<run> in ECS.
 # Needs VOLCENGINE_ACCESS_KEY/VOLCENGINE_SECRET_KEY and TOS_ACCESS_KEY/TOS_SECRET_KEY in the environment.
 job: bin/crane
@@ -30,17 +31,24 @@ bin/crane:
 	curl -fsSL https://github.com/google/go-containerregistry/releases/download/v$(CRANE_VERSION)/go-containerregistry_Linux_x86_64.tar.gz \
 		| tar xz -C bin crane
 
-# Turn a fresh Ubuntu 22.04 ECS instance into a CPU worker like REF (see build/image.sh); afterwards stop
-# it and create the custom image whose id goes in the configs' ecs.image_id. The reference bundle
-# (Docker debs, proxy, registry login) streams from REF to HOST without touching this machine's disk.
-# Usage: make image HOST=<new instance IP, root SSH> KEY=<harbor-runner private key> PUBKEY=<its .pub>
+# Turn fresh Ubuntu 22.04 ECS instances into CPU workers like REF (see build/image.sh); afterwards stop
+# them and create the custom images whose ids go in the configs' ecs.image_id. The reference bundle
+# (Docker debs, sing-box, registry login) streams from REF to each host without touching this machine's disk.
+# The worker's TUN-mode sing-box config is build/sing-box.json, with the proxy passwords filled in from
+# PROXY_SS_PASSWORD and PROXY_SHADOW_TLS_PASSWORD in the environment (never in the repo). It runs only in China
+# regions, so every region gets the same build: one host per region (CopyImage is invite-only on Volcengine).
+# Usage: make image HOST="<new instance IP, root SSH> ..." KEY=<harbor-runner private key> PUBKEY=<its .pub>
 #        make image ... REF=<another configured worker>
 REF ?= 10.42.2.111
 image:
-	$(call need,HOST PUBKEY KEY)
-	ssh -i $(KEY) -o IdentitiesOnly=yes harbor-runner@$(REF) sudo -n bash -s bundle < build/image.sh \
-		| ssh root@$(HOST) 'rm -rf /tmp/fibona-image && mkdir -m 700 /tmp/fibona-image && tar x -C /tmp/fibona-image'
-	ssh root@$(HOST) bash -s -- "'$$(cat $(PUBKEY))'" < build/image.sh
+	$(call need,HOST PUBKEY KEY PROXY_SS_PASSWORD PROXY_SHADOW_TLS_PASSWORD)
+	set -e; for host in $(HOST); do \
+		ssh -i $(KEY) -o IdentitiesOnly=yes harbor-runner@$(REF) sudo -n bash -s bundle < build/image.sh \
+			| ssh root@$$host 'rm -rf /tmp/fibona-image && mkdir -m 700 /tmp/fibona-image && tar x -C /tmp/fibona-image'; \
+		envsubst '$$PROXY_SS_PASSWORD $$PROXY_SHADOW_TLS_PASSWORD' < build/sing-box.json \
+			| ssh root@$$host 'cat > /tmp/fibona-image/proxy-dev/config.json'; \
+		ssh root@$$host bash -s -- "'$$(cat $(PUBKEY))'" < build/image.sh; \
+	done
 
 # Browse jobs: an index on VIZ_PORT whose runs and trials open in harbor view on VIZ_PORT+1.
 # Usage: make viz [VIZ_DATA=<jobs folder, e.g. unpacked TOS archives>] [VIZ_PORT=8080]  (rerun after new jobs)
