@@ -104,6 +104,7 @@ export const STOP = String.raw`
 // ponytail: lands at the cell's model call (in flight or next); cancelling the request itself is the app's.
 globalThis.STOPPED = 'Stopped by the user.'
 let stopping = false
+let stopped = false // A call failed with STOPPED; the next wake (the repair cell's) waits for the user.
 const pending = new Set()
 globalThis.stop = () => {
   stopping = true
@@ -111,16 +112,16 @@ globalThis.stop = () => {
 }
 const stoppable = call => (...args) =>
   new Promise((resolve, reject) => {
-    const fail = () => reject(new Error(STOPPED))
+    const fail = () => ((stopped = true), reject(new Error(STOPPED)))
     if (stopping) return fail()
     pending.add(fail)
     call(...args).then(resolve, reject).finally(() => pending.delete(fail))
   })
 const afterStop = wake => async (items, params) => {
-  if (history.at(-2)?.error?.includes(STOPPED)) {
-    stopping = false
+  if (stopped) {
+    stopped = stopping = false
     const note =
-      'The user stopped cell ' + (history.length - 2) + ' partway; its side effects are not rolled back ' +
+      'The user stopped the previous cell partway; its side effects are not rolled back ' +
       '(record in history, state in session globals). Their message:\n\n' + (await input())
     items = [...build_context(), { role: 'user', content: note }]
   }
