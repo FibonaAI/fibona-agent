@@ -51,6 +51,9 @@ Both default to `medium`; lower requests are raised to the minimum. Set both to 
 Other `model_settings.xxx` values map to `FIBONA_XXX` (objects use JSON), and `model` to `FIBONA_MODEL`;
 supported settings depend on the adapter. Set the API endpoint only through `FIBONA_BASE_URL`.
 Existing configs with `base_url` must move that value to the environment and remove the YAML field.
+The Fibona adapter sends the configured model name verbatim to the API, including
+any prefixes such as `chatgpt-api/` or `openai/`. The endpoint configured through
+`FIBONA_BASE_URL` owns model routing.
 
 The default agent sends each trial's Harbor id as a `session-id` request header (through `OPENAI_CUSTOM_HEADERS`), so
 a third-party gateway that keeps a session on one upstream account can keep a trial's requests together. A retried

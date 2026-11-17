@@ -112,7 +112,6 @@ class Fibona(BaseInstalledAgent):
                     for name in (
                         "fibona.py",
                         "core",
-                        "agent_assets",
                         "bootstraps",
                         "pyproject.toml",
                         "uv.lock",
@@ -142,7 +141,8 @@ class Fibona(BaseInstalledAgent):
 
     @with_prompt_template
     async def run(self, instruction, environment, context) -> None:
-        env = self.model_settings.environment(self._parsed_model_name or "gpt-6-astra")
+        # The configured endpoint owns model routing; preserve its model name.
+        env = self.model_settings.environment(self.model_name or "gpt-6-astra")
         flags = []
         if effort := self.model_settings.reasoning_effort:
             flags.extend(["--reasoning-effort", effort])
