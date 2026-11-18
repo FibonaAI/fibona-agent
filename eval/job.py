@@ -191,6 +191,7 @@ def main() -> int:
         ("model", config.model + (f", effort {effort}" if effort else "")),
         ("registry", config.registry or "none, upstream"),
         ("results", f"{job_dir}/ (Harbor's under jobs/{run}/)"),
+        ("jobs", str((job_dir / "jobs").resolve())),
         ("viewer", f"{VIEW}{run} (after archive)"),
     ]:
         log(f"{key:<9}{value}")

@@ -9,6 +9,7 @@ from threading import Lock
 from time import monotonic
 from uuid import uuid4
 
+import litellm
 from openai import APIError, OpenAI, Stream
 from openai.types.responses import Response, ResponseFunctionToolCall, ResponseFunctionToolCallOutputItem
 
@@ -44,6 +45,16 @@ Your memory is this session's variables and `history`. You are alive while the l
 your memory.
 
 
+## Context Management
+
+Maintain `context` yourself and pass it explicitly on each wake with `call_me(input=[*context, ...])`. Keep durable facts,
+decisions, verified results, and pending work there; inspect `history` and copy only what you need. Keep the stable
+prefix unchanged and append new items at the end so repeated requests can reuse the cached prefix when possible.
+
+Keep `context` within the model's context window. Before adding new items would exceed it, summarize older items,
+retain only essential instructions, goals, and facts, then append the new items.
+
+
 ## call_me
 
 `call_me` follows the standard OpenAI Responses API format, in stateless mode, with host-specific behavior defined
@@ -60,9 +71,10 @@ all items).
 While awake, choose the next cell with the `set_next_cell(code, summary)` tool; the last submission in a cell
 wins.
 
-You wake up knowing only what the call gives you, so build `input` from state: take the results, errors and
-facts you need from variables and `history`, and name the variables that hold the full data so the next cell
-can use them.
+You wake up knowing only what the call gives you, so build `input` explicitly from state: include the durable
+items you need from `context`, then add the current results, errors and facts you need from variables and
+`history`. Keep full data in named variables so the next cell can inspect it or include the relevant parts in its
+next call.
 
 Ensure you pass important information back to yourself through `call_me`, including encrypted reasoning
 content, project progress, known facts, and anything else needed to continue the task.
@@ -79,6 +91,8 @@ content, project progress, known facts, and anything else needed to continue the
 ## State
 
 - **Variables** persist. Inspect them with `globals()`; values are not automatically sent to you.
+- **`context`** is your session working context: a mutable list of Responses API input items shared by all cells in
+  the current run. It is not sent automatically; include it explicitly in `call_me` input when needed.
 - **`history`**: one `{code, summary, output, error, status}` dict per cell, including the current cell at the end.
   `summary` describes the cell's intent. `output` records stdout and stderr as of now.
   `error` records failures. `status` is `running`, `completed`, or `error`. Finished records are copies.
@@ -147,8 +161,20 @@ class Mind:
             if effort not in REASONING_EFFORTS:
                 raise ValueError(f"Unknown reasoning effort: {effort!r}")
         self.client, self.model = client, model
+        model_info_name = model.rsplit("/", 1)[-1]
+        try:
+            model_info = litellm.get_model_info(model=model_info_name)
+            context_window = model_info.get("max_input_tokens")
+            context_window = int(context_window)
+        except Exception as error:
+            raise ValueError(f"Unable to get valid model information for {model!r} from LiteLLM") from error
+        if context_window <= 0:
+            raise ValueError(f"LiteLLM has no valid context window for model {model!r}")
+        model_description = f"You are running on the `{model}` model. Its context window is {context_window:,} tokens."
         self.instructions = (
             instructions
+            + "\n\n\n## Model\n\n"
+            + model_description
             + "\n\n\n## Reasoning effort\n\n"
             + f"For `call_me`, `reasoning_effort` (default) is `{reasoning_effort}` and "
             + f"`lowest_reasoning_effort` (minimum) is `{lowest_reasoning_effort}`. "
@@ -512,6 +538,8 @@ Repair the failure and continue the program.
         with chdir(self.cwd or Path.cwd()), run_logger() as logger:
             env = env if env is not None else IPythonEnv()
             memory = Memory()
+            # A mutable working context persists in the IPython namespace across cells.
+            env.bind(context=[])
 
             def quit_() -> None:
                 raise Quit

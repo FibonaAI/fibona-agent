@@ -7,7 +7,7 @@ source "$HOME/.env"
 set +a
 
 usage() {
-  echo "用法: $0 <model> [--agent fibona|codex] [--split split-0|split-1|split-2] [--base-url URL] [--api-key KEY] [Harbor 参数...]" >&2
+  echo "用法: $0 <model> [--agent fibona|codex] [--split all|split-0|split-1|split-2] [--base-url URL] [--api-key KEY] [Harbor 参数...]" >&2
   exit 2
 }
 
@@ -73,6 +73,9 @@ esac
 
 TASK_ARGS=()
 case "$SPLIT" in
+  all)
+    # No include filter: Harbor runs every task in the dataset.
+    ;;
   split-0)
     TASK_ARGS+=(
       --include-task-name 'terminal-bench/cad-model'
@@ -149,10 +152,13 @@ case "$SPLIT" in
     )
     ;;
   *)
-    echo "未知 split: $SPLIT（可选 split-0、split-1、split-2）" >&2
+    echo "未知 split: $SPLIT（可选 all、split-0、split-1、split-2）" >&2
     exit 2
     ;;
 esac
+
+JOBS_DIR="$PWD/jobs"
+printf 'jobs directory: %s\n' "$JOBS_DIR"
 
 uv run --no-project --python 3.12 \
   --with harbor==0.24.0 \
@@ -170,5 +176,5 @@ uv run --no-project --python 3.12 \
   --n-attempts 1 \
   --n-concurrent 64 \
   --max-retries 3 \
-  --jobs-dir "$PWD/jobs" \
+  --jobs-dir "$JOBS_DIR" \
   --delete "$@"

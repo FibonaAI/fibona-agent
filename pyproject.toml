@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "httpx[socks]>=0.28.1",
     "ipython>=9.17.1",
+    "litellm>=1.109.1",
     "openai>=3.20.0",
     "prompt-toolkit>=3.0.52",
     "pygments>=2.19",

@@ -5,7 +5,7 @@ import json
 import os
 from functools import partial
 
-from bootstraps.terminal.context import initialize_context
+from bootstraps.terminal_v2.context import initialize_context
 
 task = " ".join(argv)
 _model_defaults = {}
@@ -75,7 +75,7 @@ if os.getenv("FIBONA_MCP_CONFIG"):
         + "\nUse Python top-level await: async with mcp_session(server_name) as session: then await session.list_tools() to discover tool names/descriptions/inputSchema, and await session.call_tool(tool_name, arguments={...}) to execute. Inspect returned content and isError. Keep related calls in the same async with block to preserve session state. You can also use session.list_resources(), session.read_resource(uri), session.list_prompts(), and session.get_prompt(name, arguments={...})."
     )
 
-build_context = initialize_context(globals())
+initialize_context(globals())
 response = call_me(
-    input=[*build_context(), {"role": "user", "content": "Start the user's task and submit the next Python cell."}]
+    input=[*context, {"role": "user", "content": "Start the user's task and submit the next Python cell."}]
 )
