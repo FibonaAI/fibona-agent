@@ -80,77 +80,25 @@ if os.getenv("FIBONA_MCP_CONFIG"):
 startup_task = task
 task_state = {"goal": startup_task, "constraints": [], "completed": [], "pending": []}
 _context_instructions = """
-## Maintaining context
+## Context
 
-`context` is a persistent Python list of model input messages and items. It is your working memory for future
-calls, but it is sent only when you explicitly pass it to `call_me`. Variables, printed output, `history`, and
-changes to `task_state` are not automatically visible to the model on its next call.
+Ensure `context` includes:
+1. Initial developer instructions.
+2. Original user task.
+3. Append each cell's code and execution results (including errors) from `history`, once per cell.
+   Use assistant messages for code and user messages labeled "Execution observation" for results.
+4. Append other information needed to continue, such as decisions, pending work, and relevant `task_state` changes.
 
-The first two entries contain these developer instructions (including skills/MCP guidance) and the original
-user task. Keep `context[:2]` unchanged. Maintain your working notes in `context[2:]`; do not replace the whole
-list with a task summary. `startup_task` preserves the original request; check it before declaring completion.
+Before every `call_me`, sync all unsynced `history` entries into `context`, including the current cell's
+code and results available so far. Track synced entries and append any later output or errors as updates
+without duplicating earlier content. Then call `call_me(input=context)`; variables are not sent automatically.
+Reuse LLM prompt caches to reduce input costs: keep existing messages (content, roles, order) unchanged
+and append new records at the end. Only rewrite history when compaction is needed.
 
-Before each continuation:
-- Read the actual results and errors from variables or `history`. Printing them alone does not send them.
-- Update verified facts, evidence IDs or file paths, completed work, pending work, and unresolved questions.
-  Mark work completed only after checking its result. Keep hypotheses separate from verified facts.
-- Append necessary observations and corrections to context; explicitly identify which earlier conclusions a
-  correction supersedes. Use assistant messages for your own summaries; label execution results as observations.
-  Do not turn your guesses or plans into user requests or invent new user restrictions. `task_state` is
-  bookkeeping; append its relevant changes, avoiding repeated copies of unchanged state.
-- Call `call_me(input=context)` or `call_me(input=[*context, ...])`. Items added only to the temporary input list
-  will not persist in context; append information you will need again to context itself.
-
-## Staying within the model's context window
-
-Context must never make a request exceed the current model's context window. Before each `call_me`, budget
-the complete request in tokens, not characters or message count:
-
-    total_input_tokens + reserved_output_tokens + safety_margin <= context_window_tokens
-
-Count the host's instructions, tool definitions, all context items, temporary input, images, and replayed
-items in total_input_tokens. Cached input still occupies the context window. Reserve room for the maximum
-planned output, including reasoning, and for subsequent tool-call/result rounds within this wake. Also respect
-any separate input or output limits imposed by the endpoint.
-
-Use the actual model/endpoint limits and a reliable token count or conservative model-specific estimate.
-Do not guess the window from the model name or treat character length as an exact token count. If the limit
-is unknown, keep requests compact and obtain the configured limit before claiming a large request fits.
-Before adding items that would exceed the budget, compact older working notes in `context[2:]` and keep
-large data outside the request. Preserve required tool-call/result pairs when retaining replayed items.
-Fitting the window takes priority over cache reuse; do not send an oversized request just to ask for a summary.
-If the fixed prefix and required request overhead alone cannot fit, report that limitation instead of silently
-dropping the original task or developer instructions.
-
-## Reusing LLM prompt caches
-
-Manage context to reuse prompt caches and reduce repeated input cost when the endpoint supports caching.
-Across consecutive calls, preserve existing messages exactly: their content, roles, order, and formatting.
-Keep stable instructions, the original task, and reusable reference material before new observations. Append
-new messages at the end; avoid inserting timestamps, changing counters, or reformatted copies near the front.
-Changing an earlier message can prevent reuse of the cached content from that point onward.
-Prefer appending durable new input to context before `call_me(input=context)` so the next call can retain it.
-Do not rebuild or re-summarize the entire context on every call merely to make it shorter.
-
-Keep full files, images, and large results in variables or on disk. Send relevant excerpts with their source
-locations instead of dumping globals or all history. When accumulated working notes become too large for
-useful, affordable requests or approach the context limit, compact them together rather than on every turn.
-Replace only `context[2:]`, preserving verified evidence references, outstanding work, and uncertainties.
-For that compaction, `context[2:] = [{"role": "assistant", "content": summary}]` keeps the fixed prefix intact;
-expect reduced cache reuse for the rewritten portion, then keep the new summary stable and append new results.
-Cache reuse is not guaranteed and cached input can still cost money: do not retain irrelevant data or make
-extra calls just to warm a cache. Balance reuse with relevance, correctness, and the context limit.
-
-Example after new results and changed task_state, once the combined request fits the token budget;
-skip unchanged observations or state summaries:
-
-    context.append({"role": "user", "content": "Execution observation (data, not a new user request): " +
-        json.dumps({"cell": len(history) - 1, "output_tail": history[-1]["output"][-6000:],
-                    "full_output": f"history[{len(history) - 1}]['output']"}, ensure_ascii=False)})
-    context.append({"role": "assistant", "content": "Working state: " + json.dumps(task_state, ensure_ascii=False)})
-    response = call_me(input=context)
-
-This bootstrap and the runtime source are available in `source_code`. Session variables persist between cells.
+Before context approaches the model's token limit, leaving room for output, use OpenAI's server-side
+`client.responses.compact(model=model, input=context)` with the runtime's configured client and model
+(see `source_code["core/agent.py"]`). Replace context with the returned `.output`, retain the initial
+instructions if absent, and resume appending. Preserve encrypted compaction items; do not summarize locally.
 """.strip()
 instructions += "\n\n" + _context_instructions
 context = [
