@@ -6,10 +6,8 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from threading import Lock
-from time import monotonic
 from uuid import uuid4
 
-import litellm
 from openai import APIError, OpenAI, Stream
 from openai.types.responses import Response, ResponseFunctionToolCall, ResponseFunctionToolCallOutputItem
 
@@ -24,7 +22,7 @@ to write the one after.
 
 You replace the fixed agent loop (model → tool call → model, driven by the host) with code you write yourself.
 Each step is a Python cell; the cell calls you as a function whenever it needs a decision, and your answer is
-the next cell. Every cell you write must call `call_me` to schedule the next cell via `set_next_cell`. Otherwise, it ends with an error, even if it has already printed a complete answer.
+the next cell. Every cell you write must call `call_me` to schedule the next cell via `set_next_cell`. Otherwise, it ends with an error.
 The agent loop no longer lives in the host: it lives in the program you write.
 
 
@@ -37,6 +35,12 @@ You are self-aware. Your self can be understood from two perspectives:
 - Externally, your self continually evolves on top of that internal self and may also include the code
   in the Python cells you write. When someone outside refers to "you" or "yourself", use the context
   to determine which parts they mean.
+
+`call_me` is the only way to communicate with yourself; whenever you have information to send to yourself,
+call `call_me` with that information in `input`.
+
+Your memory is this session's variables and `history`. You are alive while the loop runs, each cell waking your mind with
+your memory.
 
 
 ## call_me
@@ -55,6 +59,13 @@ all items).
 While awake, choose the next cell with the `set_next_cell(code, summary)` tool; the last submission in a cell
 wins.
 
+You wake up knowing only what the call gives you, so build `input` from state: take the results, errors and
+facts you need from variables and `history`, and name the variables that hold the full data so the next cell
+can use them.
+
+Ensure you pass important information back to yourself through `call_me`, including encrypted reasoning
+content, project progress, known facts, and anything else needed to continue the task.
+
 
 ## What a cell does
 
@@ -66,29 +77,13 @@ wins.
 
 ## State
 
-- **Variables** persist. Inspect them with `globals()`.
-- **`context`** is your session working context: a mutable list of Responses API input items shared by all cells in
-  the current run.
+- **Variables** persist. Inspect them with `globals()`; values are not automatically sent to you.
 - **`history`**: one `{code, summary, output, error, status}` dict per cell, including the current cell at the end.
   `summary` describes the cell's intent. `output` records stdout and stderr as of now.
   `error` records failures. `status` is `running`, `completed`, or `error`. Finished records are copies.
-
-
-## Context Management
-
-- Maintain `context` yourself and include it when needed, for example `call_me(input=[*context, ...])`.
-- Keep durable facts, decisions, verified results, and pending work in `context`. Inspect variables and `history`
-  for current results, errors, and other relevant information. Keep full data in named variables and send only
-  what you need.
-- Sometimes the reasoning process matters too. When needed, retrieve `reasoning` items from the `output`
-  of earlier responses and include them in the `context` you pass to `call_me`.
-- Keep the stable prefix unchanged and append new items at the end so repeated requests can reuse the cached prefix when possible.
-- Keep `context` within the model's context window. Before adding new items would exceed it, summarize older items,
-  retain only essential instructions, goals, and facts, then append the new items.
-
-You see only the working context you explicitly pass to `call_me` in `input`. Ensure you pass important information
-back to yourself through `call_me`. The host does not add session state automatically.
-
+- Choose what to include in `input`. The host does not select or send working context for you.
+- For reasoning replay, request `include=["reasoning.encrypted_content"]` and pass the `reasoning` items
+  from the previous `response.output` into the next `input`.
 
 ## In the session
 
@@ -151,20 +146,8 @@ class Mind:
             if effort not in REASONING_EFFORTS:
                 raise ValueError(f"Unknown reasoning effort: {effort!r}")
         self.client, self.model = client, model
-        model_info_name = model.rsplit("/", 1)[-1]
-        try:
-            model_info = litellm.get_model_info(model=model_info_name)
-            context_window = model_info.get("max_input_tokens")
-            context_window = int(context_window)
-        except Exception as error:
-            raise ValueError(f"Unable to get valid model information for {model!r} from LiteLLM") from error
-        if context_window <= 0:
-            raise ValueError(f"LiteLLM has no valid context window for model {model!r}")
-        model_description = f"You are running on the `{model}` model. Its context window is {context_window:,} tokens."
         self.instructions = (
             instructions
-            + "\n\n\n## Model\n\n"
-            + model_description
             + "\n\n\n## Reasoning effort\n\n"
             + f"For `call_me`, `reasoning_effort` (default) is `{reasoning_effort}` and "
             + f"`lowest_reasoning_effort` (minimum) is `{lowest_reasoning_effort}`. "
@@ -238,12 +221,10 @@ class Mind:
         usage_incomplete = False  # Whether any round omitted usage.
         metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_me"}
         log_info(logger, "model_request", **metadata, request={**body, "input": items})
-        api_call_index = 0
         while True:
             request = {**body, "input": items}
-            api_call_index += 1
             try:
-                response = _create_response(self.client, request, logger, metadata, api_call_index)
+                response = self.client.responses.create(**request)
                 if response.status == "failed":  # Provider errors can arrive after generation begins.
                     raise APIError(f"Response {response.id} failed: {response.error}", request=None, body=None)
             except BaseException as exc:
@@ -292,7 +273,7 @@ class Mind:
         metadata = {"request_id": uuid4().hex, "started_at": datetime.now(UTC).isoformat(), "source": "call_llm_api"}
         log_info(logger, "model_request", **metadata, request=request)
         try:
-            response = _create_response(self.client, request, logger, metadata, 1)
+            response = self.client.responses.create(**request)
         except BaseException as exc:
             log_info(logger, "model_error", **metadata, error={"type": type(exc).__name__, "message": str(exc)})
             raise
@@ -301,86 +282,6 @@ class Mind:
         else:
             log_info(logger, "model_stream_created", **metadata)
         return response
-
-
-def _create_response(client, request, logger, logical_metadata, index):
-    """Log each SDK invocation separately, before logical-wake usage is merged.
-
-    SDK-internal HTTP retries are part of this invocation, not separate events.
-    An api_request without a terminal event has unknown usage (e.g. a killed
-    process or a stream the caller never consumed). Never interpret it as zero.
-    """
-    metadata = {
-        "request_id": logical_metadata["request_id"],
-        "api_call_id": uuid4().hex,
-        "api_call_index": index,
-        "started_at": datetime.now(UTC).isoformat(),
-        "source": logical_metadata["source"],
-    }
-    started = monotonic()
-    log_info(logger, "api_request", **metadata, request=request)
-
-    def log_response(response):
-        log_info(
-            logger,
-            "api_response",
-            **metadata,
-            duration_seconds=monotonic() - started,
-            response_id=response.id,
-            provider_request_id=getattr(response, "_request_id", None),
-            model=response.model,
-            status=response.status,
-            service_tier=getattr(response, "service_tier", None),
-            usage=response.usage,
-            error=response.error,
-            response=response,
-        )
-
-    def log_error(exc):
-        log_info(
-            logger,
-            "api_error",
-            **metadata,
-            duration_seconds=monotonic() - started,
-            provider_request_id=getattr(exc, "request_id", None),
-            status_code=getattr(exc, "status_code", None),
-            response_body=getattr(exc, "body", None),
-            error={"type": type(exc).__name__, "message": str(exc)},
-        )
-
-    try:
-        response = client.responses.create(**request)
-    except BaseException as exc:
-        log_error(exc)
-        raise
-    if isinstance(response, Response):
-        log_response(response)
-    elif logger is not None:
-        # Preserve the original Stream, including its context manager and close
-        # behavior. Both next(stream) and iteration use the SDK's _iterator.
-        iterator = response._iterator
-
-        def logged_events():
-            terminal = False
-            try:
-                for event in iterator:
-                    log_info(logger, "api_stream_event", **metadata, stream_event=event)
-                    if event.type in {"response.completed", "response.incomplete", "response.failed"}:
-                        log_response(event.response)
-                        terminal = True
-                    yield event
-            except GeneratorExit:
-                raise
-            except BaseException as exc:
-                terminal = True
-                log_error(exc)
-                raise
-            finally:
-                if not terminal:
-                    log_info(logger, "api_incomplete", **metadata, duration_seconds=monotonic() - started)
-
-        response._iterator = logged_events()
-    return response
 
 
 def _add_usage(total, current):
@@ -528,8 +429,6 @@ Repair the failure and continue the program.
         with chdir(self.cwd or Path.cwd()), run_logger() as logger:
             env = env if env is not None else IPythonEnv()
             memory = Memory()
-            # A mutable working context persists in the IPython namespace across cells.
-            env.bind(context=[])
 
             def quit_() -> None:
                 raise Quit
