@@ -159,7 +159,10 @@ esac
 
 JOBS_DIR="$PWD/jobs"
 printf 'jobs directory: %s\n' "$JOBS_DIR"
+source "$PWD/local-eval-git-meta.sh"
+local_eval_prepare "$JOBS_DIR"
 
+set +e
 uv run --no-project --python 3.12 \
   --with harbor==0.24.0 \
   --with volcengine-python-sdk==5.0.54 \
@@ -173,8 +176,12 @@ uv run --no-project --python 3.12 \
   --ak reasoning_effort=max \
   --agent-setup-timeout-multiplier 6 \
   --env docker \
-  --n-attempts 1 \
+  --n-attempts 5 \
   --n-concurrent 64 \
   --max-retries 3 \
   --jobs-dir "$JOBS_DIR" \
   --delete "$@"
+status=$?
+set -e
+local_eval_finish "$JOBS_DIR" "$status"
+exit "$status"
