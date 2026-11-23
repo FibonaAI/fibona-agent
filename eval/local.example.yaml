@@ -9,7 +9,6 @@ model_settings:                 # Shared model settings; omitted values use code
   reasoning_effort: high        # Reasoning effort; supported values depend on the model and agent.
   lowest_reasoning_effort: medium  # Minimum effort; set to low as well when requesting low.
   api_retries: 8                # OpenAI client retries per call.
-  # extra_body: {}             # Optional JSON request extensions, interpreted by the model API.
 registry: fibona-cn-beijing.cr.volces.com/mlp   # Task images are mirrored here before the run and pulled from here;
                                                 # this machine's Docker must be logged in to it (~/.docker/config.json).
 local: {cpus: 48, memory_mb: 163840}   # Budget on this machine (gpus optional); leave room for others sharing it.

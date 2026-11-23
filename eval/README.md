@@ -33,7 +33,7 @@ See `local.example.yaml` (one machine), `cluster.beijing.example.yaml` (ECS work
 | `archive` | TOS archive location, `tos://bucket/prefix`. |
 | `dataset` / `model` | As `harbor run -d` / `-m` take them. |
 | `agent` | Optional Harbor agent name or importable `module:Class`; defaults to `plugins.agent:Fibona`. |
-| `model_settings` | Optional: `reasoning_effort`, `lowest_reasoning_effort`, `api_retries`, `extra_body` (JSON request extensions). |
+| `model_settings` | Optional: `reasoning_effort`, `lowest_reasoning_effort`, `api_retries`. |
 | `registry` | Optional: task images are mirrored here before the run and pulled from here, local or cluster; every machine's Docker must be logged in to it. Without it, tasks pull from upstream. |
 | `region` | Optional, default `cn-beijing`: where ECS workers and vePFS live. Elsewhere workers are reached over their EIPs and `registry` is not allowed. |
 | `vepfs` | Optional, cluster jobs: a vePFS mount service; ECS workers mount it at `/vepfs` and its MLP home directory at `/home/users`. |

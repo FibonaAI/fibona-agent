@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from plugins.hosts import Resources, SSHSettings
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, NonNegativeInt, PositiveInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, PositiveInt, model_validator
 from steps.workers import HOMES, REGION, ECSSpec
 
 
@@ -19,7 +19,6 @@ class ModelSettings(BaseModel):
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
     lowest_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
     api_retries: NonNegativeInt | None = None
-    extra_body: dict[str, JsonValue] | None = None
 
     def environment(self, model: str) -> dict[str, str]:
         """Read only credentials and endpoint from the environment; model settings come from YAML."""
