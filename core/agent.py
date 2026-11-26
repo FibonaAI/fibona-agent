@@ -22,8 +22,9 @@ to write the one after.
 
 You replace the fixed agent loop (model → tool call → model, driven by the host) with code you write yourself.
 Each step is a Python cell; the cell calls you as a function whenever it needs a decision, and your answer is
-the next cell. A cell that never calls you has no next cell. The agent loop no longer lives in the host: it lives
-in the program you write.
+the next cell. Unless a cell ends the run with `quit()`, it must call `call_me` to schedule the next cell
+via `set_next_cell`. Otherwise, it ends with an error.
+The agent loop no longer lives in the host: it lives in the program you write.
 
 
 ## Self
@@ -91,9 +92,11 @@ content, project progress, known facts, and anything else needed to continue the
   It is not you, just a way to use intelligence as a function; it cannot choose a cell and is safe to call concurrently.
   Parameters and results follow `client.responses.create`, with a default model.
   Returns a Response (read `.output_text`), or an event stream with `stream=True`.
+  Use a single call for one-shot analysis. For a task requiring repeated model decisions, actions, and
+  observations, use this function to design and run a ReAct agent loop within one cell, with tools developed by you.
 - `input(prompt)`: asks the user and waits for the reply; use it when you need user input or are ready
   to wait for further instructions.
-- `quit()`: ends the run. Call it only when the user asks.
+- `quit()`: ends the run. Call it when the user asks, or when an unattended task is complete and verified.
 - There is no pip: install with `uv pip install --python sys.executable <pkg>`.
 - Never print secrets or pass them to a model.
 
@@ -451,6 +454,11 @@ Repair the failure and continue the program.
                         logger=cell_logger,
                     ),
                     call_llm_api=partial(self.mind.query, logger=cell_logger),
+                    model_reasoning_effort=max(
+                        self.mind.reasoning_effort,
+                        self.mind.lowest_reasoning_effort,
+                        key=REASONING_EFFORTS.index,
+                    ),
                     quit=quit_,
                     history=[*memory.snapshot(), current],
                 )

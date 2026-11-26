@@ -28,6 +28,10 @@ logs/
 /eval/cache/
 /eval/profiles
 /eval/experiments/
+# Local analysis outputs may contain prompts, responses, and usage details.
+/eval/reports/*
+!/eval/reports/audit_costs.py
+/eval/dashboard/data.js
 /eval/viz/jobs/
 /eval/viz/data/
 /eval/viz/site/index.json

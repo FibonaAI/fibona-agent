@@ -1,31 +1,54 @@
-"""Harbor installed agent: runs Fibona with bootstrap.py once per task inside the task container.
+"""Harbor installed agent: runs Fibona once per task inside the task container.
 
-Supports reasoning_effort medium/high/xhigh/max; the core enforces at least medium.
-This implementation has no fixed context-window policy and does not consume context_tokens.
+Uses the local Harbor bootstrap and passes reasoning effort through the Fibona CLI.
 
-steps/config.py mounts /opt/fibona (wheels, uv and Python, copied by job.py), so install runs offline.
+Installation uploads the current local source and installs uv, Python and locked dependencies in the task container.
+Tasks with MCP servers additionally install the MCP SDK.
 After the run, Fibona's run logs become agent/trajectory.json (ATIF), which `harbor view` shows; see plugins/utils.py.
 """
 
+import asyncio
 import json
+import os
 import shlex
+import tarfile
+import tempfile
 from pathlib import Path
+from typing import Literal
 
 from harbor.agents.capabilities import AgentCapabilities
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
 from harbor.utils.trajectory_utils import format_trajectory_json
+from plugins.mirrors import configure_package_mirrors
 from plugins.utils import convert
-from steps.config import ModelSettings
+from pydantic import BaseModel, ConfigDict, NonNegativeInt
 
 # The bootstrap cell each task runs; see bootstrap.py.
 BOOTSTRAP = (Path(__file__).parent / "bootstrap.py").read_text()
 
 
+class ModelSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
+    lowest_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = None
+    api_retries: NonNegativeInt | None = None
+
+    def environment(self, model: str) -> dict[str, str]:
+        environment = {name: os.environ[name] for name in ("FIBONA_API_KEY", "FIBONA_BASE_URL") if os.environ.get(name)}
+        environment["FIBONA_API_RETRIES"] = str(self.api_retries if self.api_retries is not None else 8)
+        environment["FIBONA_MODEL"] = model
+        return environment
+
+
 class Fibona(BaseInstalledAgent):
     capabilities = AgentCapabilities(skills=True, mcp_servers=True)
+    _REPO = '"$HOME/.local/share/harbor-fibona"'
 
-    def __init__(self, *args, base_url: str | None = None, **kwargs) -> None:
-        self.base_url = base_url
+    def __init__(self, *args, fast: bool = False, ultrafast: bool = False, **kwargs) -> None:
+        if fast and ultrafast:
+            raise ValueError("fast and ultrafast are mutually exclusive")
+        self.fast, self.ultrafast = fast, ultrafast
         self.model_settings = ModelSettings.model_validate(
             {key: kwargs.pop(key) for key in ModelSettings.model_fields if key in kwargs}
         )
@@ -40,36 +63,48 @@ class Fibona(BaseInstalledAgent):
         totals = {"n_input_tokens": 0, "n_cache_tokens": 0, "n_output_tokens": 0, "cost_usd": 0.0}
         missing = set()
         seen = False
+        incomplete = False
         for path in self.logs_dir.glob("*.jsonl"):
-            for line in path.read_text().splitlines():
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    self.logger.warning("Incomplete Fibona log record; usage totals are unknown")
-                    missing.update(totals)
-                    continue
-                if record.get("event") == "model_error":  # Rounds before the error are not logged with usage.
-                    missing.update(totals)
-                if record.get("event") != "model_response":
-                    continue
-                usage = record["response"].get("usage") or {}
-                seen = True
-                if usage.get("incomplete"):
-                    missing.update(totals)
-                values = {
-                    "n_input_tokens": usage.get("input_tokens"),
-                    "n_cache_tokens": (usage.get("input_tokens_details") or {}).get("cached_tokens"),
-                    "n_output_tokens": usage.get("output_tokens"),
-                    "cost_usd": usage.get("cost"),
-                }
-                for key, value in values.items():
-                    if value is None:
-                        missing.add(key)
-                    else:
-                        totals[key] += value
+            invalid_lines = []
+            # JSONL records end at LF; splitlines() also splits valid Unicode
+            # characters such as U+0085 inside JSON strings.
+            with path.open(encoding="utf-8") as lines:
+                for line_number, line in enumerate(lines, 1):
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        invalid_lines.append(line_number)
+                        missing.update(totals)
+                        continue
+                    if record.get("event") == "model_error":  # Rounds before the error are not logged with usage.
+                        missing.update(totals)
+                    if record.get("event") != "model_response":
+                        continue
+                    usage = record["response"].get("usage") or {}
+                    incomplete = incomplete or bool(usage.get("incomplete"))
+                    seen = True
+                    values = {
+                        "n_input_tokens": usage.get("input_tokens"),
+                        "n_cache_tokens": (usage.get("input_tokens_details") or {}).get("cached_tokens"),
+                        "n_output_tokens": usage.get("output_tokens"),
+                        "cost_usd": usage.get("cost"),
+                    }
+                    for key, value in values.items():
+                        if value is None:
+                            missing.add(key)
+                        else:
+                            totals[key] += value
+            if invalid_lines:
+                self.logger.warning(
+                    "Incomplete Fibona log records in %s at lines %s (%d total); usage totals are unknown",
+                    path,
+                    invalid_lines[:10],
+                    len(invalid_lines),
+                )
         if seen:
             for key, value in totals.items():
                 setattr(context, key, None if key in missing else value)
+        context.metadata = {**(context.metadata or {}), "incomplete": incomplete or bool(missing) or not seen}
         try:
             trajectory = convert(self.logs_dir, self.model_name)
         except Exception:
@@ -79,20 +114,60 @@ class Fibona(BaseInstalledAgent):
             (self.logs_dir / "trajectory.json").write_text(format_trajectory_json(trajectory.to_json_dict()))
 
     async def install(self, environment) -> None:
+        source = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory(prefix="harbor-fibona-") as directory:
+            archive_path = Path(directory) / "source.tar.gz"
+
+            def pack_source():
+                def source_file(member):
+                    if "__pycache__" in Path(member.name).parts or member.name.endswith(".pyc"):
+                        return None
+                    return member
+
+                with tarfile.open(archive_path, "w:gz") as archive:
+                    for name in (
+                        "fibona.py",
+                        "core",
+                        "bootstraps",
+                        "pyproject.toml",
+                        "uv.lock",
+                        "README.md",
+                        "LICENSE",
+                    ):
+                        archive.add(source / name, arcname=name, filter=source_file)
+
+            await asyncio.to_thread(pack_source)
+            await configure_package_mirrors(self, environment)
+            await self.ensure_system_dependencies(environment, ("curl", "ca_certificates"))
+            await environment.upload_file(archive_path, "/installed-agent/fibona-source.tar.gz")
         await self.exec_as_agent(
             environment,
-            command="set -euo pipefail; UV_PYTHON_INSTALL_DIR=/opt/fibona/python /opt/fibona/dist/uv tool install "
-            "--python 3.12 --offline --no-index --find-links /opt/fibona/dist /opt/fibona/dist/fibona_agent-*.whl; "
+            command="set -euo pipefail; "
+            'curl -fsSL https://astral.sh/uv/0.13.5/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" sh; '
+            f"mkdir -p {self._REPO}; "
+            f"tar -xzf /installed-agent/fibona-source.tar.gz -C {self._REPO}; "
+            f'"$HOME/.local/bin/uv" sync --project {self._REPO} --python 3.12 --frozen --no-dev; '
             f"printf %s {shlex.quote(BOOTSTRAP)} > $HOME/fibona-bootstrap.py",
         )
+        if self.mcp_servers:
+            await self.exec_as_agent(
+                environment,
+                command=f'"$HOME/.local/bin/uv" pip install --python {self._REPO}/.venv/bin/python "mcp==1.25.0"',
+            )
 
     @with_prompt_template
     async def run(self, instruction, environment, context) -> None:
-        env = self.model_settings.environment(self.model_name or "gpt-6-astra", self.base_url)
-        if env.get("FIBONA_REASONING_EFFORT", "medium") not in {"medium", "high", "xhigh", "max"}:
-            raise ValueError(
-                "Fibona supports reasoning_effort medium/high/xhigh/max; select an agent that supports the requested effort"
-            )
+        # The configured endpoint owns model routing; preserve its model name.
+        env = self.model_settings.environment(self.model_name or "gpt-6-astra")
+        flags = []
+        if effort := self.model_settings.reasoning_effort:
+            flags.extend(["--reasoning-effort", effort])
+        if lowest_effort := self.model_settings.lowest_reasoning_effort:
+            flags.extend(["--lowest-reasoning-effort", lowest_effort])
+        if self.fast:
+            flags.append("--fast")
+        if self.ultrafast:
+            flags.append("--ultrafast")
         env["FIBONA_LOG_DIR"] = "/logs/agent"
         # Sent with every request of the process, so a gateway can keep the trial's requests on one upstream account.
         env["OPENAI_CUSTOM_HEADERS"] = f"session-id: {self.context_id}"
@@ -114,9 +189,9 @@ class Fibona(BaseInstalledAgent):
         await self.exec_as_agent(
             environment,
             command=f"printf %s {shlex.quote(instruction)} > /logs/agent/instruction.txt; "  # The trajectory's first step.
-            'export PATH="$HOME/.local/bin:/opt/fibona/dist:$PATH"; '
-            "$HOME/.local/bin/fibona --boot-mode $HOME/fibona-bootstrap.py "
-            f"{shlex.quote(instruction)} < /dev/null > /logs/agent/fibona.txt 2>&1; "
+            'export PATH="$HOME/.local/bin:$PATH"; '
+            f"{self._REPO}/.venv/bin/python {self._REPO}/fibona.py --boot-mode $HOME/fibona-bootstrap.py "
+            f"{shlex.join(flags)} {shlex.quote(instruction)} < /dev/null > /logs/agent/fibona.txt 2>&1; "
             'status=$?; tail -c 65536 /logs/agent/fibona.txt; exit "$status"',
             env=env,
         )
