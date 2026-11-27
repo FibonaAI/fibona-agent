@@ -44,6 +44,20 @@ Try the [online demo](https://fibona.ai/fibona-agent) in your browser.
 
 Requires Python 3.12+ and `uv`.
 
+Model capability reference data is maintained in `core/model_capabilities.json`, a full
+snapshot of [LiteLLM's model table](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json).
+Refresh it with `uv run python tools/update_model_capabilities.py`; no LiteLLM dependency or runtime download is needed.
+The snapshot includes provider-specific entries and aliases, preserves capability fields,
+and excludes pricing data and the upstream schema example. Only the current model's entry
+is sent to the model, not the entire table. Unknown fields remain unknown.
+The outer agent receives this metadata in its instructions, and cells can access
+`model_capabilities` and `model_capabilities_prompt`. The evaluation ReAct loop also sends
+the latter as instructions. Plain `call_llm_api` calls remain unchanged.
+Known routing prefixes can resolve to base model entries; these are reference values, not
+guarantees about gateway overrides. Missing values remain unknown. In particular, input
+limits are not relabeled as total context windows, and reasoning token limits are not
+inferred from reasoning effort or output limits.
+
 1. Create a `.env` file in the project root:
 
    ```dotenv

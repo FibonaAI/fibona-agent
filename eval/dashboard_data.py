@@ -1,6 +1,7 @@
 """Build dashboard summaries from local Harbor results without reading agent trajectories."""
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -58,13 +59,22 @@ def trial_summary(config_path):
     }
 
 
+def job_configs(root: Path):
+    for directory, subdirs, files in os.walk(root):
+        if "config.json" not in files:
+            continue
+        config_path = Path(directory) / "config.json"
+        config = read_json(config_path)
+        if not isinstance(config, dict) or not isinstance(config.get("agents"), list):
+            continue
+        subdirs.clear()
+        yield config_path, config
+
+
 def build_jobs(root: Path):
     jobs = []
-    for config_path in root.glob("*/config.json"):
-        config = read_json(config_path)
+    for config_path, config in job_configs(root):
         result = read_json(config_path.parent / "result.json")
-        if not config or not result:
-            continue
         stats = result.get("stats") or {}
         agent = (config.get("agents") or [{}])[0]
         passed, failed, exceptions = [], [], []
@@ -88,7 +98,7 @@ def build_jobs(root: Path):
                 continue
         jobs.append(
             {
-                "id": config_path.parent.name,
+                "id": config_path.parent.relative_to(root).as_posix(),
                 "startedAt": result.get("started_at"),
                 "finishedAt": result.get("finished_at"),
                 "harness": agent.get("name", "?"),

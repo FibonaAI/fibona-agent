@@ -4,9 +4,11 @@ agent.py writes this file into the task container. It runs as a cell, so argv an
 session. The task comes from the command line; nobody answers input(), so the agent ends the run with quit().
 """
 
+import inspect
 import json
 
-from bootstraps.terminal.context import initialize_context
+from core import agent as core_agent
+from core import env as core_env
 
 
 def run_react(messages, *, tools=(), handlers=None, max_turns=64):
@@ -15,6 +17,7 @@ def run_react(messages, *, tools=(), handlers=None, max_turns=64):
     for _ in range(max_turns):
         response = globals()["call_llm_api"](
             input=list(messages),
+            instructions=globals()["model_capabilities_prompt"],
             reasoning={"effort": globals()["model_reasoning_effort"]},
             store=False,
             include=["reasoning.encrypted_content"],
@@ -39,10 +42,13 @@ def run_react(messages, *, tools=(), handlers=None, max_turns=64):
 
 instructions = """
 You are running unattended in a benchmark container: nobody reads your output or answers input().
+Use a short plan for complex work and update it as facts change. Try another approach when blocked; do not restart successful work or generate alternative solutions without a concrete unresolved issue.
 Before preparing final deliverables or declaring completion, reread startup_task in full and check every required output, path, format, behavior, and constraint against it.
 Verify delivery by inspecting the actual files, database records, or service state and the results of relevant checks; a plan, summary, or successful file write alone does not establish completion.
+Run tests appropriate to the change and complete required checks. Once those pass, broaden or repeat testing only when new changes, failures, or unresolved concerns justify it; otherwise, continue toward completing the task.
 Submit only one set_next_cell per wake; it schedules future work, which has not executed until recorded in history.
 If a required deliverable is missing or a check fails, keep it pending and continue working. Call quit() only after verifying the task's requirements are satisfied.
+When the task is verified complete, report what changed, why, how it was tested, and any material risks or limitations, then call quit(); do not keep reviewing or repeat external submissions.
 These cells use Fibona's isolated Python runtime, which can differ from the task's Python.
 Inspect the task's supplied interpreters and virtualenvs for preinstalled dependencies before downloading duplicate packages into this runtime.
 The uv executable is available on PATH at $HOME/.local/bin/uv.
@@ -58,13 +64,53 @@ For a task needing repeated inspection, implementation, testing, or repair, defa
 After any essential initial inspection, define the minimal tools and invoke the loop in that same cell; do not repeatedly postpone it for more planning or environment inspection. Environment discovery and dependency setup can themselves be delegated through those tools.
 It has no default tools or task prompt: supply task messages, Responses API function schemas, and a name-to-synchronous-callable mapping. Develop only the tools needed; do not expose call_me or quit as inner tools.
 The loop uses the configured model and effective reasoning effort, preserves reasoning and tool observations in messages, and returns a Response when the model replies without tool calls, or None at the turn limit. Reuse messages to continue if needed.
-Keep direct Python for simple deterministic work. Verify the loop's actual results yourself, then call_me with concise evidence to continue or quit when the original task is verified complete.
+Keep direct Python for simple deterministic work. Continue the same ReAct conversation while
+the task has unresolved issues; preserve its observations, decisions, and verified results.
+Use the loop's deliverables and recorded verification evidence to check completion against the original task;
+its return does not by itself require a separate review pass. Continue the existing conversation for
+failed or missing required checks, carrying the evidence and preserving the original objective.
+Quit when the original task is verified complete.
 """.strip()
 task = " ".join(argv)  # noqa: F821 -- fibona.py binds the arguments it did not consume.
-build_context = initialize_context(globals())
+startup_task = task
+task_state = {"goal": startup_task, "constraints": [], "completed": [], "pending": []}
+_context_instructions = """
+## Context
+
+Keep the initialized `context`: its developer instructions and original task retain their roles and text.
+Before every `call_me(input=context)`, append unsynced `history` code, output, and errors, including the
+current cell's results so far. Use assistant messages for code and user messages labeled "Execution
+observation" for results. Track cell indices and output offsets; append only new data, even after compaction.
+Append relevant decisions and pending work as assistant notes. Only rewrite working history for compaction;
+never replace the original task with a review prompt. After an error/recovery wake, inspect the failure, sync history, and resume
+with the same context and sync state. A failed cell does not reset the task or imply its actions failed.
+
+Reuse LLM prompt caches to reduce cost: keep existing messages unchanged and append at the end.
+Keep large data in variables/files and print targeted results with references rather than dumping everything.
+
+Before reaching the context window limit, leaving room for output, compact context yourself. Keep `context[:2]` unchanged and replace older working history with an assistant
+summary of verified facts, evidence references, decisions, completed actions, pending work, and uncertainties.
+Retain recent results needed for the next step. Keep full history in `history` and preserve sync indices and
+output offsets so summarized entries are not appended again. Resume appending to reuse the new cached prefix.
+""".strip()
+instructions += "\n\n" + _context_instructions
+context = [
+    {"role": "developer", "content": instructions},
+    {"role": "user", "content": f"Startup task: {startup_task}"},
+]
+source_code = {
+    "core/agent.py": inspect.getsource(core_agent),
+    "core/env.py": inspect.getsource(core_env),
+    "eval/plugins/bootstrap.py": history[-1]["code"],  # noqa: F821
+}
+var_docs = {
+    "startup_task": "Original user task.",
+    "context": "Persistent working context; pass explicitly to call_me().",
+    "task_state": "Current goal, constraints, completed work and pending work.",
+}
 call_me(  # noqa: F821 -- core binds call_me.
     input=[
-        *build_context(),
+        *context,
         {
             "role": "user",
             "content": "Start the user's task. If it requires iterative actions and observations, submit a cell that develops the minimal tools, supplies the original task and relevant evidence in messages, and actually invokes run_react. Use direct Python for simple deterministic work.",

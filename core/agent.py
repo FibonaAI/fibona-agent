@@ -12,6 +12,7 @@ from openai import APIError, OpenAI, Stream
 from openai.types.responses import Response, ResponseFunctionToolCall, ResponseFunctionToolCallOutputItem
 
 from core.env import CellResult, IPythonEnv, Quit
+from core.model_capabilities import get_model_capabilities, model_capabilities_prompt
 from core.utils import _merge_extra_body, log_info, run_logger
 
 INSTRUCTIONS = """
@@ -88,6 +89,8 @@ content, project progress, known facts, and anything else needed to continue the
 
 ## In the session
 
+- `model_capabilities`: reference capabilities for the configured model; missing or null fields are unknown.
+- `model_capabilities_prompt`: the same metadata formatted for use in inner model instructions.
 - `call_llm_api(input, **params)`: a plain model call without predefined agent instructions or the host tool.
   It is not you, just a way to use intelligence as a function; it cannot choose a cell and is safe to call concurrently.
   Parameters and results follow `client.responses.create`, with a default model.
@@ -151,6 +154,8 @@ class Mind:
         self.client, self.model = client, model
         self.instructions = (
             instructions
+            + "\n\n"
+            + model_capabilities_prompt(model)
             + "\n\n\n## Reasoning effort\n\n"
             + f"For `call_me`, `reasoning_effort` (default) is `{reasoning_effort}` and "
             + f"`lowest_reasoning_effort` (minimum) is `{lowest_reasoning_effort}`. "
@@ -454,6 +459,8 @@ Repair the failure and continue the program.
                         logger=cell_logger,
                     ),
                     call_llm_api=partial(self.mind.query, logger=cell_logger),
+                    model_capabilities=get_model_capabilities(self.mind.model),
+                    model_capabilities_prompt=model_capabilities_prompt(self.mind.model),
                     model_reasoning_effort=max(
                         self.mind.reasoning_effort,
                         self.mind.lowest_reasoning_effort,

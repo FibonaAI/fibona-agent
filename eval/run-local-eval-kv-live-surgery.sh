@@ -8,7 +8,7 @@ set +a
 
 
 usage() {
-  echo "用法: $0 <model> [--agent fibona|codex] [--split all|split-0|split-1|split-2] [--base-url URL] [--api-key KEY] [Harbor 参数...]" >&2
+  echo "用法: $0 <model> [--agent fibona|codex] [--split all|split-0|split-1|split-2] [--base-url URL] [--api-key KEY] [--reasoning-effort max] [--tag TAG] [Harbor 参数...]" >&2
   exit 2
 }
 
@@ -17,6 +17,7 @@ MODEL=$1
 shift
 SPLIT=split-0
 AGENT=fibona
+EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent)
@@ -46,7 +47,8 @@ while [[ $# -gt 0 ]]; do
       break
       ;;
     *)
-      break
+      EXTRA_ARGS+=("$1")
+      shift
       ;;
   esac
 done
@@ -76,6 +78,7 @@ esac
 JOBS_DIR="$PWD/jobs"
 printf 'jobs directory: %s\n' "$JOBS_DIR"
 source "$PWD/local-eval-git-meta.sh"
+local_eval_configure "${EXTRA_ARGS[@]}" "$@"
 local_eval_prepare "$JOBS_DIR"
 
 # Pin Terminal Bench 4.0.0, matching the heat-pump-warranty task version.
@@ -89,14 +92,15 @@ uv run --no-project --python 3.12 \
   --task 'terminal-bench/kv-live-surgery' \
   --agent "$AGENT_SPEC" \
   --model "$MODEL" \
-  --ak reasoning_effort=max \
+  --ak "reasoning_effort=$REASONING_EFFORT" \
   --agent-setup-timeout-multiplier 6 \
   --env docker \
   --n-attempts 20 \
   --n-concurrent 64 \
   --max-retries 3 \
   --jobs-dir "$JOBS_DIR" \
-  --delete "$@"
+  --job-name "$LOCAL_EVAL_JOB_NAME" \
+  --delete "${HARBOR_ARGS[@]}"
 status=$?
 set -e
 local_eval_finish "$JOBS_DIR" "$status"
